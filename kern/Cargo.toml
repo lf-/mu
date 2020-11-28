@@ -1,0 +1,23 @@
+[package]
+name = "kern"
+version = "0.1.0"
+authors = ["lf- <lf-@users.noreply.github.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+debug = true
+
+[dependencies]
+
+[dependencies.bitvec]
+version = "0.19.4"
+default-features = false
+
+[build-dependencies]
+cc = "1.0.65"

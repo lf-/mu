@@ -1,0 +1,11 @@
+[build]
+# we choose to use the most full-featured riscv64 implementation without
+# floating point cuz i can't be bothered with that
+target = "riscv64imac-unknown-none-elf"
+
+[target.riscv64imac-unknown-none-elf]
+linker = "/opt/llvm/bin/ld.lld"
+rustflags = ["-C", "link-args=-Tkern.ld"]
+
+# FIXME
+#runner = "/opt/qemu
