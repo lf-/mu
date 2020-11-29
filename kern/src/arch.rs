@@ -3,16 +3,39 @@
 use core::{
     cell::UnsafeCell,
     ops::{Deref, DerefMut, RangeInclusive},
+    panic::Location,
+    ptr,
+    sync::atomic::AtomicPtr,
+    sync::atomic::AtomicUsize,
     sync::atomic::{AtomicBool, Ordering},
 };
 
 /// Disables interrupts being delivered to the current core
-pub unsafe fn disable_interrupts() {}
+pub unsafe fn disable_interrupts() {
+    // we will be invoked from supervisor mode so we need to change the sstatus
+    let clear_mask = 1 << SSTATUS_SIE;
+    asm!(
+        "csrc sstatus, {0}",
+        in(reg) clear_mask
+    )
+}
+
+/// Disables interrupts being delivered to the current core
+pub unsafe fn enable_interrupts() {
+    // we will be invoked from supervisor mode so we need to change the sstatus
+    let set_mask = 1 << SSTATUS_SIE;
+    asm!(
+        "csrs sstatus, {0}",
+        in(reg) set_mask
+    )
+}
 
 pub const MSTATUS_MPP: RangeInclusive<usize> = 11..=12;
 pub const MSTATUS_MIE: usize = 3;
 
 pub const MIE_MTIE: usize = 7;
+
+pub const SSTATUS_SIE: usize = 1;
 
 pub const SIE_SEIE: usize = 9;
 pub const SIE_STIE: usize = 5;
@@ -135,7 +158,7 @@ csrw!(
 
 // ------------- Unprivileged Instructions ---------------
 
-pub fn set_tp(new: usize) {
+pub fn set_core_id(new: usize) {
     unsafe {
         asm!(
             "mv tp, {0}",
@@ -145,7 +168,7 @@ pub fn set_tp(new: usize) {
     }
 }
 
-pub fn get_tp() -> usize {
+pub fn core_id() -> usize {
     unsafe {
         let tp;
         asm!(
@@ -159,17 +182,22 @@ pub fn get_tp() -> usize {
 
 /// A non-reentrant (!!!) mutex
 ///
-/// You can totally deadlock yourself. Try not to.
+/// You can totally deadlock yourself. We will panic if you try.
 ///
 /// This is almost certainly unsound if panic is not abort. Fortunately, we are a
 /// kernel
 // TODO: implement deadlock detection and owner finding
 pub struct Mutex<T> {
     inner: UnsafeCell<T>,
-    locked: AtomicBool,
+    ticket: AtomicUsize,
+    next_ticket: AtomicUsize,
+    owner: AtomicUsize,
+    owner_location: AtomicPtr<Location<'static>>,
+    mask_interrupts: bool,
 }
 
 unsafe impl<T> Sync for Mutex<T> {}
+unsafe impl<T> Send for Mutex<T> {}
 
 #[must_use = "you need to use this to use the mutex"]
 pub struct LockGuard<'a, T> {
@@ -177,18 +205,59 @@ pub struct LockGuard<'a, T> {
 }
 
 impl<T> Mutex<T> {
+    /// Makes a Mutex
     pub const fn new(inner: T) -> Mutex<T> {
         Mutex {
             inner: UnsafeCell::new(inner),
-            locked: AtomicBool::new(false),
+            ticket: AtomicUsize::new(0),
+            next_ticket: AtomicUsize::new(0),
+            owner: AtomicUsize::new(!0),
+            owner_location: AtomicPtr::new(ptr::null_mut()),
+            mask_interrupts: false,
         }
     }
 
-    pub fn lock(&self) -> LockGuard<T> {
-        // if we are not locked, this will set the mutex to locked
-        while self.locked.compare_and_swap(false, true, Ordering::SeqCst) {
-            // spin
+    /// Makes a Mutex that disables interrupts
+    pub const fn new_nopreempt(inner: T) -> Mutex<T> {
+        Mutex {
+            inner: UnsafeCell::new(inner),
+            ticket: AtomicUsize::new(0),
+            next_ticket: AtomicUsize::new(0),
+            owner: AtomicUsize::new(!0),
+            owner_location: AtomicPtr::new(ptr::null_mut()),
+            mask_interrupts: true,
         }
+    }
+
+    #[track_caller]
+    pub fn lock(&self) -> LockGuard<T> {
+        // take a unique ticket
+        let ticket = self.next_ticket.fetch_add(1, Ordering::SeqCst);
+        let core = core_id();
+
+        if self.mask_interrupts {
+            unsafe { disable_interrupts() };
+        }
+
+        // wait for our ticket to come up
+        while ticket != self.ticket.load(Ordering::SeqCst) {
+            if self.owner.load(Ordering::SeqCst) == core {
+                // we're trying to unlock a lock that belongs to our core
+                // this is a deadlock
+                // safety: this is a static thing of some kind idk
+                let loc = unsafe { &*(self.owner.load(Ordering::SeqCst) as *const Location) };
+                panic!(
+                    "tried to lock a lock owned by own core!! deadlock. Check {:?}",
+                    loc
+                );
+            }
+            // spin
+            core::hint::spin_loop();
+        }
+
+        self.owner.store(core, Ordering::SeqCst);
+        self.owner_location
+            .store(Location::caller() as *const _ as *mut _, Ordering::SeqCst);
 
         LockGuard { mutex: self }
     }
@@ -214,7 +283,13 @@ impl<T> DerefMut for LockGuard<'_, T> {
 
 impl<T> Drop for LockGuard<'_, T> {
     fn drop(&mut self) {
-        // safety: i am so tired idk
-        self.mutex.locked.store(false, Ordering::SeqCst);
+        if self.mutex.mask_interrupts {
+            // TODO: this is straight up buggy if we are called from within an
+            // ISR because we should not enable interrupts if they were off the
+            // whole time!!
+            unsafe { enable_interrupts() }
+        }
+        // increment the ticket by one to let the next user get it
+        self.mutex.ticket.fetch_add(1, Ordering::SeqCst);
     }
 }

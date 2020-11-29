@@ -21,6 +21,7 @@ pub static STACKS: [usize; 8192 * addr::MAX_CPUS] = [0usize; 8192 * addr::MAX_CP
 
 #[panic_handler]
 fn panic_handler(_info: &PanicInfo) -> ! {
+    // TODO: bring down all other cores by NMI and stop the system
     loop {}
 }
 
@@ -38,9 +39,9 @@ unsafe extern "C" fn startup() {
     // this function will be hit by as many harts as we have, at once
     // thus, we will spinloop the ones we don't have work for yet
     let core_id = m_core_id();
-    if core_id != 0 {
-        loop {}
-    }
+    // if core_id != 0 {
+    //     loop {}
+    // }
 
     // § 3.1.6 RISC-V privileged ISA
     let mut new_mstatus = get_mstatus();
@@ -70,14 +71,14 @@ unsafe extern "C" fn startup() {
     interrupts::init_timers();
 
     // put our hart id into the thread pointer
-    set_tp(core_id);
+    set_core_id(core_id);
 
     asm!("mret");
     core::hint::unreachable_unchecked();
 }
 
 unsafe extern "C" fn kern_main() {
-    let core_id = get_tp();
+    let core_id = core_id();
     if core_id == 0 {
         crate::print::init();
     }

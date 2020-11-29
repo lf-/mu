@@ -2,7 +2,7 @@
 QEMU = /opt/qemu/bin/qemu-system-riscv64
 GDB = /opt/gdb/bin/gdb
 # TODO: UP for the minute
-CPUS = 1
+CPUS = 3
 KERNEL = target/riscv64imac-unknown-none-elf/debug/kern
 
 QEMUOPTS = -machine virt -bios none -kernel $(KERNEL) -m 128M -smp $(CPUS) -nographic

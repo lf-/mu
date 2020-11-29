@@ -11,7 +11,8 @@ use bitvec::prelude::*;
 
 use crate::arch::Mutex;
 
-static SERIAL_PORT: Mutex<Option<Serial>> = Mutex::new(None);
+static SERIAL_PORT: Mutex<Option<Serial>> = Mutex::new_nopreempt(None);
+pub static PRINT_LOCK: Mutex<()> = Mutex::new_nopreempt(());
 
 /// Receiver Buffer Register
 const REG_RBR: isize = 0x00;
@@ -141,6 +142,7 @@ impl core::fmt::Write for SerialWriter {
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {{
+        let _guard = $crate::print::PRINT_LOCK.lock();
         let _ = core::fmt::Write::write_fmt(
             &mut $crate::print::SerialWriter,
             format_args!($($arg)*)
@@ -150,8 +152,16 @@ macro_rules! print {
 
 #[macro_export]
 macro_rules! println {
-    ($($arg:tt)*) => {{
-        print!($($arg)*);
+    () => {{
         print!("\n");
+    }};
+    ($($arg:tt)*) => {{
+        let _guard = $crate::print::PRINT_LOCK.lock();
+        let writer = &mut $crate::print::SerialWriter;
+        let _ = core::fmt::Write::write_fmt(
+            writer,
+            format_args!($($arg)*)
+        );
+        let _ = core::fmt::Write::write_str(writer, "\n");
     }}
 }
