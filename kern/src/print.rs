@@ -11,7 +11,6 @@ use bitvec::prelude::*;
 
 use crate::arch::Mutex;
 
-const SERIAL_BASE: *mut () = 0x10000000 as *mut _;
 static SERIAL_PORT: Mutex<Option<Serial>> = Mutex::new(None);
 
 /// Receiver Buffer Register
@@ -123,7 +122,7 @@ pub fn init() {
     // TODO: there is a bug here: we need to disable interrupts while we have this lock held
     // it will work fine until we enable them........
     let mut guard = SERIAL_PORT.lock();
-    let mut serial = unsafe { Serial::new(SERIAL_BASE) };
+    let mut serial = unsafe { Serial::new(crate::addr::UART0 as *mut _) };
     serial.init(Baudrate::B38400);
     *guard = Some(serial);
 }

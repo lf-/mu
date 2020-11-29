@@ -2,12 +2,58 @@
 
 use core::{
     cell::UnsafeCell,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, RangeInclusive},
     sync::atomic::{AtomicBool, Ordering},
 };
 
+/// Disables interrupts being delivered to the current core
+pub unsafe fn disable_interrupts() {}
+
+pub const MSTATUS_MPP: RangeInclusive<usize> = 11..=12;
+pub const MSTATUS_MIE: usize = 3;
+
+pub const MIE_MTIE: usize = 7;
+
+pub const SIE_SEIE: usize = 9;
+pub const SIE_STIE: usize = 5;
+pub const SIE_SSIE: usize = 1;
+
+macro_rules! csrr {
+    ($docs:expr, $fn_name:ident, $csr_name:ident) => {
+        csrr!($docs, $fn_name, $csr_name, usize);
+    };
+
+    ($docs:expr, $fn_name:ident, $csr_name:ident, $ret_ty:ty) => {
+        #[doc=$docs]
+        pub unsafe fn $fn_name() -> $ret_ty {
+            let ret;
+            asm!(
+                concat!("csrr {0}, ", stringify!($csr_name)),
+                out(reg) ret
+            );
+            ret
+        }
+    }
+}
+
+macro_rules! csrw {
+    ($docs:expr, $fn_name:ident, $csr_name:ident) => {
+        csrw!($docs, $fn_name, $csr_name, usize);
+    };
+
+    ($docs:expr, $fn_name:ident, $csr_name:ident, $working_ty:ty) => {
+        #[doc=$docs]
+        pub unsafe fn $fn_name($csr_name: $working_ty) {
+            asm!(
+                concat!("csrw ", stringify!($csr_name), ", {0}"),
+                in(reg) $csr_name
+            );
+        }
+    }
+}
+
 /// Gets the identifier of the core running this function
-pub fn core_id() -> usize {
+pub fn m_core_id() -> usize {
     let ret: usize;
     unsafe {
         asm!(
@@ -16,6 +62,99 @@ pub fn core_id() -> usize {
         )
     }
     ret
+}
+
+#[cfg(target_arch = "riscv64")]
+csrr!(
+    "Gets the RISC-V machine-mode mstatus register",
+    get_mstatus,
+    mstatus,
+    u64
+);
+
+#[cfg(target_arch = "riscv64")]
+csrw!(
+    r#"Sets the RISC-V machine-mode status register
+
+This is restricted to rv64 since it has a different status register format.
+"#,
+    set_mstatus,
+    mstatus,
+    u64
+);
+
+csrw!(
+    "Sets the machine exception return address",
+    set_mepc,
+    mepc,
+    unsafe extern "C" fn()
+);
+
+csrw!(
+    "Sets the bitfield of which machine exceptions are delegated to supervisor mode",
+    set_medeleg,
+    medeleg
+);
+
+csrw!(
+    "Sets the bitfield of which machine interrupts are delegated to supervisor mode",
+    set_mideleg,
+    mideleg
+);
+
+csrw!("Sets the machine scratch register", set_mscratch, mscratch);
+csrw!(
+    "Sets the machine mode trap vector",
+    set_mtvec,
+    mtvec,
+    unsafe extern "C" fn()
+);
+
+csrr!("Gets the machine mode interrupt enables", get_mie, mie);
+csrw!("Sets the machine mode interrupt enables", set_mie, mie);
+
+// -----Supervisor Instructions-----
+
+csrr!(
+    "Gets the supervisor interrupt enable register",
+    get_sie,
+    sie
+);
+
+csrw!(
+    "Sets the supervisor interrupt enable register",
+    set_sie,
+    sie
+);
+
+csrw!(
+    "Sets the supervisor address translation and protection register",
+    set_satp,
+    satp
+);
+
+// ------------- Unprivileged Instructions ---------------
+
+pub fn set_tp(new: usize) {
+    unsafe {
+        asm!(
+            "mv tp, {0}",
+            in(reg) new,
+            options(nomem, nostack)
+        )
+    }
+}
+
+pub fn get_tp() -> usize {
+    unsafe {
+        let tp;
+        asm!(
+            "mv {0}, tp",
+            out(reg) tp,
+            options(nomem, nostack)
+        );
+        tp
+    }
 }
 
 /// A non-reentrant (!!!) mutex
