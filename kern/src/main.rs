@@ -11,7 +11,7 @@ mod isr;
 
 use crate::arch::*;
 
-use core::panic::PanicInfo;
+use core::{ffi::c_void, panic::PanicInfo};
 
 use bitvec::prelude::*;
 
@@ -34,14 +34,18 @@ enum ArchPrivilegeLevel {
     Machine = 3,
 }
 
+extern "C" {
+    static SUPERVISOR_VECTORS: c_void;
+}
+
 #[no_mangle]
 unsafe extern "C" fn startup() {
     // this function will be hit by as many harts as we have, at once
     // thus, we will spinloop the ones we don't have work for yet
     let core_id = m_core_id();
-    // if core_id != 0 {
-    //     loop {}
-    // }
+    if core_id != 0 {
+        loop {}
+    }
 
     // § 3.1.6 RISC-V privileged ISA
     let mut new_mstatus = get_mstatus();
@@ -68,6 +72,9 @@ unsafe extern "C" fn startup() {
     view.set(SIE_SSIE, true);
     set_sie(sie);
 
+    // the 1 enables vectored mode
+    set_stvec(&SUPERVISOR_VECTORS as *const c_void as u64 | 1);
+
     interrupts::init_timers();
 
     // put our hart id into the thread pointer
@@ -77,7 +84,7 @@ unsafe extern "C" fn startup() {
     core::hint::unreachable_unchecked();
 }
 
-unsafe extern "C" fn kern_main() {
+unsafe extern "C" fn kern_main() -> ! {
     let core_id = core_id();
     if core_id == 0 {
         crate::print::init();
@@ -85,4 +92,8 @@ unsafe extern "C" fn kern_main() {
     println!("hello world from core {}!", core_id);
     // we will hit this with one core!
     // println!("hello world from risc-v!!");
+    get_sstatus();
+    get_sip();
+
+    loop {}
 }

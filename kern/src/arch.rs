@@ -110,7 +110,7 @@ csrw!(
     "Sets the machine exception return address",
     set_mepc,
     mepc,
-    unsafe extern "C" fn()
+    unsafe extern "C" fn() -> !
 );
 
 csrw!(
@@ -126,12 +126,7 @@ csrw!(
 );
 
 csrw!("Sets the machine scratch register", set_mscratch, mscratch);
-csrw!(
-    "Sets the machine mode trap vector",
-    set_mtvec,
-    mtvec,
-    unsafe extern "C" fn()
-);
+csrw!("Sets the machine mode trap vector", set_mtvec, mtvec, u64);
 
 csrr!("Gets the machine mode interrupt enables", get_mie, mie);
 csrw!("Sets the machine mode interrupt enables", set_mie, mie);
@@ -142,6 +137,12 @@ csrr!(
     "Gets the supervisor interrupt enable register",
     get_sie,
     sie
+);
+
+csrr!(
+    "Gets the supervisor interrupt pending register",
+    get_sip,
+    sip
 );
 
 csrw!(
@@ -155,6 +156,10 @@ csrw!(
     set_satp,
     satp
 );
+
+csrw!("Sets the supervisor trap vector", set_stvec, stvec, u64);
+
+csrr!("Gets the supervisor status register", get_sstatus, sstatus);
 
 // ------------- Unprivileged Instructions ---------------
 

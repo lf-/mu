@@ -11,12 +11,14 @@ fn main() {
     // R_RISCV_ALIGN requires unimplemented linker relaxation; recompile
     // with -mno-relax
 
-    builder.clone().file("src/init.s").compile("init");
     builder
         .clone()
+        .file("src/init.s")
+        .file("src/vectors.s")
         .file("src/trampoline.s")
-        .compile("trampoline");
+        .compile("kern_asm");
 
     println!("cargo:rerun-if-changed=src/init.s");
     println!("cargo:rerun-if-changed=src/trampoline.s");
+    println!("cargo:rerun-if-changed=src/vectors.s");
 }

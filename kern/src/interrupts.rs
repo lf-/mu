@@ -1,5 +1,6 @@
 //! Hardware abstraction code for the interrupt controllers
 
+use core::ffi::c_void;
 use core::ptr;
 
 use bitvec::prelude::*;
@@ -19,7 +20,10 @@ pub static mut CLINT: Clint = Clint {
     base: addr::CLINT as *mut _,
 };
 
+/// Data to be used by our timer ISRs in `vectors.s`. Do not change this
+/// structure without checking those first!
 #[derive(Debug, Clone, Copy)]
+#[repr(C)]
 pub struct TimerIsrData {
     pub regs: [u64; 2],
     pub my_mtimecmp: *mut u64,
@@ -67,6 +71,10 @@ impl Clint {
     }
 }
 
+extern "C" {
+    static MACHINE_VECTORS: c_void;
+}
+
 pub unsafe fn init_timers() {
     let hart = arch::m_core_id();
 
@@ -74,6 +82,9 @@ pub unsafe fn init_timers() {
     let interval = 1000000;
     CLINT.schedule_interrupt(hart as u8, interval);
 
+    // TODO:
+    // this is probably a bad idea since this stuff is really probably volatile
+    // also we should fix that static mut. yikes.
     let my_isr_data = &mut TIMER_ISR_DATA[hart];
 
     *my_isr_data = TimerIsrData {
@@ -83,7 +94,8 @@ pub unsafe fn init_timers() {
     };
 
     // we are using non-vectored interrupt mode; set the machine trap vector
-    arch::set_mtvec(isr::machine_trap);
+    arch::set_mtvec(&MACHINE_VECTORS as *const c_void as u64);
+    arch::set_mscratch(&mut TIMER_ISR_DATA[hart] as *mut TimerIsrData as usize);
 
     // turn on machine interrupts
     let mut status = arch::get_mstatus();
