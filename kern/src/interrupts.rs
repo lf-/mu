@@ -16,7 +16,7 @@ const TIMER_ISR_EMPTY: TimerIsrData = TimerIsrData {
 };
 
 pub static mut TIMER_ISR_DATA: [TimerIsrData; addr::MAX_CPUS] = [TIMER_ISR_EMPTY; addr::MAX_CPUS];
-pub static mut CLINT: Clint = Clint {
+pub static CLINT: Clint = Clint {
     base: addr::CLINT as *mut _,
 };
 
@@ -35,6 +35,9 @@ pub struct TimerIsrData {
 pub struct Clint {
     base: *mut (),
 }
+
+/// safety: the accesses don't step on each other
+unsafe impl Sync for Clint {}
 
 impl Clint {
     /// Creates a new Clint interface.

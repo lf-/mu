@@ -185,6 +185,27 @@ pub fn core_id() -> usize {
     }
 }
 
+/// Call into M-mode. Do not change these without also fixing their respective
+/// definitions in vectors.s.
+#[repr(usize)]
+pub enum MachineCall {
+    /// Requests that the `mc_arg` hart be interrupted.
+    InterruptHart = 0,
+    /// Requests that the STIP flag be cleared in mstatus.
+    ClearTimerInt = 1,
+}
+
+/// Call into machine mode.
+pub fn machinecall(mc: MachineCall, mc_arg: usize) {
+    let mcnum = mc as usize;
+    // a0 and a1 are clobbered in machine mode here
+    unsafe {
+        asm!("ecall",
+            inout("a0") mcnum => _,
+            inout("a1") mc_arg => _)
+    };
+}
+
 /// A non-reentrant (!!!) mutex
 ///
 /// You can totally deadlock yourself. We will panic if you try.
@@ -234,12 +255,23 @@ impl<T> Mutex<T> {
         }
     }
 
+    /// Defeats the lock. This is *wildly* unsafe. Use with caution.
+    ///
+    /// This pretty much requires you halted all the other cores with S-mode
+    /// interrupts disabled to be safe.
+    pub unsafe fn defeat(&self) -> *mut T {
+        self.inner.get()
+    }
+
+    /// Locks the Mutex and returns a LockGuard that can be used to access the
+    /// resource
     #[track_caller]
     pub fn lock(&self) -> LockGuard<T> {
         // take a unique ticket
         let ticket = self.next_ticket.fetch_add(1, Ordering::SeqCst);
         let core = core_id();
 
+        // TODO: this is straight up a bug; we should save interrupt state
         if self.mask_interrupts {
             unsafe { disable_interrupts() };
         }
@@ -294,6 +326,10 @@ impl<T> Drop for LockGuard<'_, T> {
             // whole time!!
             unsafe { enable_interrupts() }
         }
+        self.mutex.owner.store(!0, Ordering::SeqCst);
+        self.mutex
+            .owner_location
+            .store(ptr::null_mut(), Ordering::SeqCst);
         // increment the ticket by one to let the next user get it
         self.mutex.ticket.fetch_add(1, Ordering::SeqCst);
     }

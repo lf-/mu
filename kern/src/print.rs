@@ -11,7 +11,7 @@ use bitvec::prelude::*;
 
 use crate::arch::Mutex;
 
-static SERIAL_PORT: Mutex<Option<Serial>> = Mutex::new_nopreempt(None);
+pub static SERIAL_PORT: Mutex<Option<Serial>> = Mutex::new_nopreempt(None);
 pub static PRINT_LOCK: Mutex<()> = Mutex::new_nopreempt(());
 
 /// Receiver Buffer Register
@@ -98,7 +98,7 @@ impl Serial {
 
     /// Transmits a bunch of bytes synchronously
     // TODO: do this faster with interrupts
-    pub fn transmit(&self, c: &[u8]) {
+    pub fn transmit(&mut self, c: &[u8]) {
         unsafe {
             let lsr = self.base.offset(REG_LSR);
             let mut lsr_val = bitarr![Lsb0, u8; 0; 8];

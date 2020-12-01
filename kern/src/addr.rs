@@ -21,6 +21,7 @@
 //     [VIRT_DRAM] =        { 0x80000000,           0x0 },
 // };
 
+// note that this needs to be manually synced with vectors.s values
 pub const MAX_CPUS: usize = 8;
 
 pub const UART0: usize = 0x10000000;
