@@ -10,13 +10,14 @@ mod globals;
 mod interrupts;
 mod isr;
 
-use crate::arch::*;
-use crate::globals::*;
-
 use core::fmt::Write;
 use core::{ffi::c_void, panic::PanicInfo, sync::atomic::Ordering};
 
+use crate::arch::*;
+use crate::globals::*;
 use addr::MAX_CPUS;
+use riscv_paging::{virt_map, PageTable, PhysAddr, Pte, PteAttr, VirtAddr};
+
 use bitvec::prelude::*;
 
 #[panic_handler]
@@ -71,17 +72,16 @@ fn panic_handler(info: &PanicInfo) -> ! {
     loop {}
 }
 
-#[allow(dead_code)]
-#[repr(u8)]
-enum ArchPrivilegeLevel {
-    User = 0,
-    Supervisor = 1,
-    Reserved = 2,
-    Machine = 3,
-}
-
 extern "C" {
     static SUPERVISOR_VECTORS: c_void;
+    #[link_name = "text"]
+    static SEC_TEXT: c_void;
+    #[link_name = "etext"]
+    static SEC_ETEXT: c_void;
+    #[link_name = "rodata"]
+    static SEC_RODATA: c_void;
+    #[link_name = "end"]
+    static SEC_END: c_void;
 }
 
 #[no_mangle]
@@ -95,13 +95,13 @@ unsafe extern "C" fn startup() {
 
     // § 3.1.6 RISC-V privileged ISA
     let mut new_mstatus = get_mstatus();
-    let view = new_mstatus.view_bits_mut::<Lsb0>();
     // set MPP (previous mode) to supervisor, privilege level 1
-    view[MSTATUS_MPP].store(ArchPrivilegeLevel::Supervisor as u64);
+    new_mstatus.set_m_prev_pl(ArchPrivilegeLevel::Supervisor);
+
     set_mstatus(new_mstatus);
 
     // turn off paging
-    set_satp(0);
+    set_satp(Satp(0));
 
     // set the exception return address
     set_mepc(kern_main);
@@ -142,6 +142,35 @@ unsafe extern "C" fn kern_main() -> ! {
     // println!("hello world from risc-v!!");
     get_sstatus();
     get_sip();
+
+    let root_pt = PageTable::<PhysMem>::alloc().expect("root pagetable alloc failed");
+    let textaddr = &SEC_TEXT as *const _ as usize;
+    let etextaddr = &SEC_ETEXT as *const _ as usize;
+    virt_map(
+        root_pt,
+        PhysAddr::new(textaddr),
+        VirtAddr(textaddr),
+        etextaddr.checked_sub(textaddr).unwrap(),
+        PteAttr::R | PteAttr::X,
+    );
+
+    let rodataaddr = &SEC_RODATA as *const _ as usize;
+    let endaddr = &SEC_END as *const _ as usize;
+    virt_map(
+        root_pt,
+        PhysAddr::new(rodataaddr),
+        VirtAddr(rodataaddr),
+        endaddr.checked_sub(rodataaddr).unwrap(),
+        PteAttr::R.into(),
+    );
+
+    virt_map(
+        root_pt,
+        PhysAddr::new(addr::PHYSMEM),
+        VirtAddr(addr::PHYSMEM_MAP),
+        addr::PHYSMEM_LEN,
+        PteAttr::R | PteAttr::W,
+    );
 
     panic!("test test test!!");
 

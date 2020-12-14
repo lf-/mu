@@ -9,10 +9,11 @@ use core::slice;
 
 use bitvec::prelude::*;
 
-use crate::arch::Mutex;
+use crate::arch::Arch;
+use fidget_spinner::Mutex;
 
-pub static SERIAL_PORT: Mutex<Option<Serial>> = Mutex::new_nopreempt(None);
-pub static PRINT_LOCK: Mutex<()> = Mutex::new_nopreempt(());
+pub static SERIAL_PORT: Mutex<Option<Serial>, Arch> = Mutex::new(None);
+pub static PRINT_LOCK: Mutex<(), Arch> = Mutex::new(());
 
 /// Receiver Buffer Register
 const REG_RBR: isize = 0x00;

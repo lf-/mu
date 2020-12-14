@@ -1,14 +1,19 @@
 //! Architecture-specific functions
 
-use core::{
-    cell::UnsafeCell,
-    ops::{Deref, DerefMut, RangeInclusive},
-    panic::Location,
-    ptr,
-    sync::atomic::AtomicPtr,
-    sync::atomic::AtomicUsize,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::mem;
+use core::ops::RangeInclusive;
+use core::ptr;
+
+use fidget_spinner::ArchDetails;
+use riscv_paging::{PhysAccess, PhysPageMetadata};
+use riscv_paging::{PhysAddr, PAGE_MASK};
+
+use bitvec::prelude::*;
+
+use crate::addr::PHYSMEM_MAP;
+
+type Mutex<T> = fidget_spinner::Mutex<T, Arch>;
+type Phys<T> = riscv_paging::Phys<T, PhysMem>;
 
 /// Disables interrupts being delivered to the current core
 pub unsafe fn disable_interrupts() {
@@ -56,7 +61,18 @@ macro_rules! csrr {
             );
             ret
         }
-    }
+    };
+    ($docs:expr, $fn_name:ident, $csr_name:ident, struct $ret_ty:ident) => {
+        #[doc=$docs]
+        pub unsafe fn $fn_name() -> $ret_ty {
+            let ret;
+            asm!(
+                concat!("csrr {0}, ", stringify!($csr_name)),
+                out(reg) ret
+            );
+            $ret_ty(ret)
+        }
+    };
 }
 
 macro_rules! csrw {
@@ -72,7 +88,17 @@ macro_rules! csrw {
                 in(reg) $csr_name
             );
         }
-    }
+    };
+
+    ($docs:expr, $fn_name:ident, $csr_name:ident, struct $working_ty:ty) => {
+        #[doc=$docs]
+        pub unsafe fn $fn_name($csr_name: $working_ty) {
+            asm!(
+                concat!("csrw ", stringify!($csr_name), ", {0}"),
+                in(reg) $csr_name.0
+            );
+        }
+    };
 }
 
 /// Gets the identifier of the core running this function
@@ -92,7 +118,7 @@ csrr!(
     "Gets the RISC-V machine-mode mstatus register",
     get_mstatus,
     mstatus,
-    u64
+    struct StatusReg
 );
 
 #[cfg(target_arch = "riscv64")]
@@ -103,7 +129,7 @@ This is restricted to rv64 since it has a different status register format.
 "#,
     set_mstatus,
     mstatus,
-    u64
+    struct StatusReg
 );
 
 csrw!(
@@ -154,7 +180,15 @@ csrw!(
 csrw!(
     "Sets the supervisor address translation and protection register",
     set_satp,
-    satp
+    satp,
+    struct Satp
+);
+
+csrr!(
+    "Gets the supervisor address translation and protection register",
+    get_satp,
+    satp,
+    struct Satp
 );
 
 csrw!("Sets the supervisor trap vector", set_stvec, stvec, u64);
@@ -206,131 +240,141 @@ pub fn machinecall(mc: MachineCall, mc_arg: usize) {
     };
 }
 
-/// A non-reentrant (!!!) mutex
-///
-/// You can totally deadlock yourself. We will panic if you try.
-///
-/// This is almost certainly unsound if panic is not abort. Fortunately, we are a
-/// kernel
-// TODO: implement deadlock detection and owner finding
-pub struct Mutex<T> {
-    inner: UnsafeCell<T>,
-    ticket: AtomicUsize,
-    next_ticket: AtomicUsize,
-    owner: AtomicUsize,
-    owner_location: AtomicPtr<Location<'static>>,
-    mask_interrupts: bool,
+#[allow(dead_code)]
+#[repr(u8)]
+pub enum ArchPrivilegeLevel {
+    User = 0,
+    Supervisor = 1,
+    Reserved = 2,
+    Machine = 3,
 }
 
-unsafe impl<T> Sync for Mutex<T> {}
-unsafe impl<T> Send for Mutex<T> {}
-
-#[must_use = "you need to use this to use the mutex"]
-pub struct LockGuard<'a, T> {
-    mutex: &'a Mutex<T>,
+pub enum TranslationMode {
+    /// no translation/protection
+    Bare,
+    Sv39,
+    Other(u8),
 }
 
-impl<T> Mutex<T> {
-    /// Makes a Mutex
-    pub const fn new(inner: T) -> Mutex<T> {
-        Mutex {
-            inner: UnsafeCell::new(inner),
-            ticket: AtomicUsize::new(0),
-            next_ticket: AtomicUsize::new(0),
-            owner: AtomicUsize::new(!0),
-            owner_location: AtomicPtr::new(ptr::null_mut()),
-            mask_interrupts: false,
+/// `satp` CSR
+pub struct Satp(pub u64);
+
+impl Satp {
+    /// gets the current mode
+    pub fn mode(&self) -> TranslationMode {
+        let mode_raw = self.0.view_bits::<Lsb0>()[60..=63].load::<u8>();
+        match mode_raw {
+            0 => TranslationMode::Bare,
+            8 => TranslationMode::Sv39,
+            other => TranslationMode::Other(other),
         }
     }
 
-    /// Makes a Mutex that disables interrupts
-    pub const fn new_nopreempt(inner: T) -> Mutex<T> {
-        Mutex {
-            inner: UnsafeCell::new(inner),
-            ticket: AtomicUsize::new(0),
-            next_ticket: AtomicUsize::new(0),
-            owner: AtomicUsize::new(!0),
-            owner_location: AtomicPtr::new(ptr::null_mut()),
-            mask_interrupts: true,
-        }
+    /// sets the translation mode
+    pub fn set_mode(&mut self, new: TranslationMode) {
+        self.0.view_bits_mut::<Lsb0>()[60..=63].store(match new {
+            TranslationMode::Bare => 0,
+            TranslationMode::Sv39 => 8,
+            TranslationMode::Other(o) => o,
+        })
     }
 
-    /// Defeats the lock. This is *wildly* unsafe. Use with caution.
-    ///
-    /// This pretty much requires you halted all the other cores with S-mode
-    /// interrupts disabled to be safe.
-    pub unsafe fn defeat(&self) -> *mut T {
-        self.inner.get()
-    }
-
-    /// Locks the Mutex and returns a LockGuard that can be used to access the
-    /// resource
-    #[track_caller]
-    pub fn lock(&self) -> LockGuard<T> {
-        // take a unique ticket
-        let ticket = self.next_ticket.fetch_add(1, Ordering::SeqCst);
-        let core = core_id();
-
-        // TODO: this is straight up a bug; we should save interrupt state
-        if self.mask_interrupts {
-            unsafe { disable_interrupts() };
-        }
-
-        // wait for our ticket to come up
-        while ticket != self.ticket.load(Ordering::SeqCst) {
-            if self.owner.load(Ordering::SeqCst) == core {
-                // we're trying to unlock a lock that belongs to our core
-                // this is a deadlock
-                // safety: this is a static thing of some kind idk
-                let loc = unsafe { &*(self.owner.load(Ordering::SeqCst) as *const Location) };
-                panic!(
-                    "tried to lock a lock owned by own core!! deadlock. Check {:?}",
-                    loc
-                );
-            }
-            // spin
-            core::hint::spin_loop();
-        }
-
-        self.owner.store(core, Ordering::SeqCst);
-        self.owner_location
-            .store(Location::caller() as *const _ as *mut _, Ordering::SeqCst);
-
-        LockGuard { mutex: self }
+    /// returns whether paging is enabled
+    pub fn paging_enabled(&self) -> bool {
+        !matches!(self.mode(), TranslationMode::Bare)
     }
 }
 
-impl<T> Deref for LockGuard<'_, T> {
-    type Target = T;
+/// status register. some fields may not have valid values depending on CPU mode
+pub struct StatusReg(pub u64);
 
-    fn deref(&self) -> &Self::Target {
-        // safety: you have the lock guard which can only be created by locking
-        // the object
-        unsafe { &*self.mutex.inner.get() }
-    }
-}
-
-impl<T> DerefMut for LockGuard<'_, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        // safety: you have the lock guard which can only be created by locking
-        // the object
-        unsafe { &mut *self.mutex.inner.get() }
-    }
-}
-
-impl<T> Drop for LockGuard<'_, T> {
-    fn drop(&mut self) {
-        if self.mutex.mask_interrupts {
-            // TODO: this is straight up buggy if we are called from within an
-            // ISR because we should not enable interrupts if they were off the
-            // whole time!!
-            unsafe { enable_interrupts() }
+impl StatusReg {
+    /// gets the machine previous privilege level (mstatus.MPP)
+    pub fn m_prev_pl(&self) -> ArchPrivilegeLevel {
+        unsafe {
+            // @#$#$@! rustc please let me just cast this bloody thing
+            mem::transmute::<u8, ArchPrivilegeLevel>(
+                self.0.view_bits::<Lsb0>()[MSTATUS_MPP].load(), //
+            )
         }
-        self.mutex.owner.store(!0, Ordering::SeqCst);
-        self.mutex
-            .owner_location
-            .store(ptr::null_mut(), Ordering::SeqCst);
-        // increment the ticket by one to let the next user get it
-        self.mutex.ticket.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// sets the machine previous privilege level (mstatus.MPP)
+    pub fn set_m_prev_pl(&mut self, new: ArchPrivilegeLevel) {
+        self.0.view_bits_mut::<Lsb0>()[MSTATUS_MPP].store(new as u8);
+    }
+
+    /// get machine interrupts enabled (mstatus.MIE)
+    pub fn m_ints(&self) -> bool {
+        self.0.view_bits::<Lsb0>()[MSTATUS_MIE]
+    }
+
+    /// sets machine interrupts enabled (mstatus.MIE)
+    pub fn set_m_ints(&mut self, new: bool) {
+        self.0.view_bits_mut::<Lsb0>().set(MSTATUS_MIE, new);
+    }
+}
+
+/// An implementation of ArchDetails
+pub struct Arch;
+
+impl ArchDetails for Arch {
+    fn core_id() -> usize {
+        core_id()
+    }
+}
+
+static PHYS_FREELIST: Mutex<Option<Phys<PhysPageMetadata<PhysMem>>>> = Mutex::new(None);
+
+/// A structure implementing physical memory access
+#[derive(Clone, Copy)]
+pub struct PhysMem;
+
+fn pm_base() -> usize {
+    if unsafe { get_satp().paging_enabled() } {
+        PHYSMEM_MAP
+    } else {
+        0
+    }
+}
+
+impl PhysAccess for PhysMem {
+    unsafe fn address<T>(ptr: PhysAddr<Self>) -> *mut T {
+        pm_base().wrapping_add(ptr.get()) as *mut T
+    }
+
+    unsafe fn alloc() -> Option<PhysAddr<Self>> {
+        let mut guard = PHYS_FREELIST.lock();
+        // grab the pointer to the next thing in the list
+        let ret = (*guard)?;
+        // get the metadata block at the front of the list
+        let mine = *ret.as_ptr();
+        // get the next one in the list. If the list is empty in an OOM
+        // situation we will still keep the last page in the list. Undecided
+        // as to whether this is intentional or not.
+        let next = mine.next?;
+        assert!(
+            next.addr().get() & PAGE_MASK == next.addr().get(),
+            "Loaded corrupt (?) metadata from free list: addr to next page not page aligned"
+        );
+        *guard = Some(next);
+        Some(ret.addr())
+    }
+
+    unsafe fn free(addr: PhysAddr<Self>) {
+        assert!(
+            addr.get() & PAGE_MASK == addr.get(),
+            "Freed page address must be page aligned"
+        );
+        let mut guard = PHYS_FREELIST.lock();
+        let tail = *guard;
+        let record = PhysPageMetadata { next: tail };
+        // store the record pointing to the existing tail the start of the page
+        // we're freeing
+        let ptr = Phys::new(addr);
+        *ptr.as_ptr() = record;
+
+        // store the pointer to the block we just made on the free list pointer
+        *guard = Some(ptr);
     }
 }

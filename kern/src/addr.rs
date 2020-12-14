@@ -24,6 +24,11 @@
 // note that this needs to be manually synced with vectors.s values
 pub const MAX_CPUS: usize = 8;
 
-pub const UART0: usize = 0x10000000;
-pub const CLINT: usize = 0x2000000;
-pub const PHYSMEM: usize = 0x80000000;
+pub const UART0: usize = 0x1000_0000;
+pub const CLINT: usize = 0x200_0000;
+pub const PHYSMEM: usize = 0x8000_0000;
+// 128 MiB
+pub const PHYSMEM_LEN: usize = 128 * 1024 * 1024;
+
+pub const MAX_VIRT: usize = 0x80_0000_0000;
+pub const PHYSMEM_MAP: usize = 0x50_0000_0000;

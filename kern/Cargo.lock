@@ -19,6 +19,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95752358c8f7552394baf48cd82695b345628ad3f170d607de3ca03b8dacca15"
 
 [[package]]
+name = "fidget_spinner"
+version = "0.1.0"
+
+[[package]]
 name = "funty"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -30,6 +34,8 @@ version = "0.1.0"
 dependencies = [
  "bitvec",
  "cc",
+ "fidget_spinner",
+ "riscv_paging",
 ]
 
 [[package]]
@@ -37,6 +43,14 @@ name = "radium"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "941ba9d78d8e2f7ce474c015eea4d9c6d25b6a3327f9832ee29a4de27f91bbb8"
+
+[[package]]
+name = "riscv_paging"
+version = "0.1.0"
+dependencies = [
+ "bitvec",
+ "fidget_spinner",
+]
 
 [[package]]
 name = "tap"

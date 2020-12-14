@@ -7,7 +7,6 @@ use bitvec::prelude::*;
 
 use crate::addr;
 use crate::arch;
-use crate::isr;
 
 const TIMER_ISR_EMPTY: TimerIsrData = TimerIsrData {
     regs: [0; 2],
@@ -40,21 +39,6 @@ pub struct Clint {
 unsafe impl Sync for Clint {}
 
 impl Clint {
-    /// Creates a new Clint interface.
-    ///
-    /// Safety: given pointer must actually point to a Clint
-    pub const unsafe fn new(base: *mut ()) -> Clint {
-        Clint { base }
-    }
-
-    /// Send a software interrupt to a hart
-    pub unsafe fn interrupt_hart(&self, hart_id: u8) {
-        // get the address of the msip
-        let addr = (self.base as *mut u32).offset(hart_id as isize);
-        // interrupt it
-        addr.write_volatile(1);
-    }
-
     unsafe fn my_mtimecmp(&self, hart_id: u8) -> *mut u64 {
         let mtimecmp_base = self.base as usize + 0x4000;
         let addr = (mtimecmp_base as *mut u64).offset(hart_id as isize);
@@ -102,8 +86,7 @@ pub unsafe fn init_timers() {
 
     // turn on machine interrupts
     let mut status = arch::get_mstatus();
-    let view = status.view_bits_mut::<Lsb0>();
-    view.set(arch::MSTATUS_MIE, true);
+    status.set_m_ints(true);
     arch::set_mstatus(status);
 
     // enable machine timer interrupts
