@@ -3,11 +3,6 @@
 This crate is themed around bringing type safety to integers as commonly used in
 FFI or other low level constructs.
 
-# Bit flags
-We implement a macro [`int_flags!`], which generates a type safe newtype
-around an integer that supports binary OR with only values of its own type or
-a custom integer based enum.
-
 # Enums with integers
 We implement two macros that allow you to declare an enum with integer
 options, and automatically implement [`From`] or [`TryFrom`] for them.
@@ -159,99 +154,6 @@ macro_rules! int_enum_only {
                     ),*
                     , _ => Err(())
                 }
-            }
-        }
-    }
-}
-
-/**
-Generates (comparatively more) type safe bit flag types.
-
-# Example
-```rust
-use typesafe_ints::int_flags;
-int_flags!(
-    enum PteAttr(PteAttrs; u8) {
-        /// Page writable
-        W = 1 << 2,
-        /// Page readable
-        R = 1 << 1,
-        /// Valid PTE
-        V = 1 << 0,
-    }
-);
-
-let flags = PteAttr::R | PteAttr::W;
-assert!(flags.has(PteAttr::R));
-assert!(!flags.has(PteAttr::V));
-let flags: PteAttrs = PteAttr::R.into();
-assert!(flags.has(PteAttr::R));
-
-// you can still put arbitrary stuff in here
-let flags_from_pt = PteAttrs(1u8);
-assert!(flags_from_pt.has(PteAttr::V));
-```
-*/
-#[macro_export]
-macro_rules! int_flags {
-    ($(#[$meta:meta])* $vis:vis enum $ident:ident($(#[$pmeta:meta])* $plural:ident;
-                                                    $ty:ty) {
-        $($(#[$varmeta:meta])* $variant:ident = $num:expr),* $(,)*
-    }) => {
-        $(#[$meta])*
-        $vis enum $ident {
-            $($(#[$varmeta])* $variant = $num),*
-        }
-
-        $(#[$pmeta])*
-        #[derive(Clone, Copy)]
-        $vis struct $plural(pub $ty);
-
-        impl From<$plural> for $ty {
-            fn from(a: $plural) -> Self {
-                a.0
-            }
-        }
-
-        impl From<$ident> for $plural {
-            fn from(a: $ident) -> Self {
-                $plural(a as $ty)
-            }
-        }
-
-        impl core::ops::BitOr<$ident> for $ident {
-            type Output = $plural;
-
-            fn bitor(self, rhs: $ident) -> Self::Output {
-                $plural(self as $ty | rhs as $ty)
-            }
-        }
-
-        impl core::ops::BitOr<$ident> for $plural {
-            type Output = $plural;
-
-            fn bitor(self, rhs: $ident) -> Self::Output {
-                $plural(self.0 | rhs as $ty)
-            }
-        }
-
-        impl core::ops::BitOr<$plural> for $plural {
-            type Output = $plural;
-
-            fn bitor(self, rhs: $plural) -> Self::Output {
-                $plural(self.0 | rhs.0)
-            }
-        }
-
-        impl $plural {
-            pub const NONE: $plural = $plural(0);
-
-            fn has(self, attr: $ident) -> bool {
-                self.0 & attr as $ty != 0
-            }
-
-            fn has_any(self, attrs: $plural) -> bool {
-                self.0 & attrs.0 != 0
             }
         }
     }
