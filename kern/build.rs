@@ -21,4 +21,5 @@ fn main() {
     println!("cargo:rerun-if-changed=src/init.s");
     println!("cargo:rerun-if-changed=src/trampoline.s");
     println!("cargo:rerun-if-changed=src/vectors.s");
+    println!("cargo:rerun-if-changed=kern.ld");
 }

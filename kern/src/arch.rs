@@ -5,12 +5,13 @@ use core::ops::RangeInclusive;
 use core::ptr;
 
 use fidget_spinner::ArchDetails;
-use riscv_paging::{PhysAccess, PhysPageMetadata};
+use riscv_paging::{PageTable, PhysAccess, PhysPageMetadata, PAGE_SIZE};
 use riscv_paging::{PhysAddr, PAGE_MASK};
 
 use bitvec::prelude::*;
 
 use crate::addr::PHYSMEM_MAP;
+use crate::task::Task;
 
 type Mutex<T> = fidget_spinner::Mutex<T, Arch>;
 type Phys<T> = riscv_paging::Phys<T, PhysMem>;
@@ -191,6 +192,13 @@ csrr!(
     struct Satp
 );
 
+csrw!(
+    "Sets the running task (saves the given task pointer to sscratch)",
+    set_running_task,
+    sscratch,
+    &mut Task
+);
+
 csrw!("Sets the supervisor trap vector", set_stvec, stvec, u64);
 
 csrr!("Gets the supervisor status register", get_sstatus, sstatus);
@@ -257,9 +265,23 @@ pub enum TranslationMode {
 }
 
 /// `satp` CSR
+#[derive(Debug, Clone, Copy)]
 pub struct Satp(pub u64);
 
 impl Satp {
+    /// Makes the `satp` register required for using the given page table
+    pub fn new(pt: &PageTable<PhysMem>, asid: u16, mode: TranslationMode) -> Satp {
+        let ppn = pt.get_base().get() / (PAGE_SIZE as usize);
+        assert!(ppn < 1 << 43, "ppn out of range");
+        let mut v = 0u64;
+        let bits = v.view_bits_mut::<Lsb0>();
+        bits[0..=43].store(ppn);
+        bits[44..=59].store(asid);
+        let mut satp = Satp(v);
+        satp.set_mode(mode);
+        satp
+    }
+
     /// gets the current mode
     pub fn mode(&self) -> TranslationMode {
         let mode_raw = self.0.view_bits::<Lsb0>()[60..=63].load::<u8>();
@@ -354,7 +376,7 @@ impl PhysAccess for PhysMem {
         // as to whether this is intentional or not.
         let next = mine.next?;
         assert!(
-            next.addr().get() & PAGE_MASK == next.addr().get(),
+            next.addr().is_page_aligned(),
             "Loaded corrupt (?) metadata from free list: addr to next page not page aligned"
         );
         *guard = Some(next);
@@ -363,7 +385,7 @@ impl PhysAccess for PhysMem {
 
     unsafe fn free(addr: PhysAddr<Self>) {
         assert!(
-            addr.get() & PAGE_MASK == addr.get(),
+            addr.is_page_aligned(),
             "Freed page address must be page aligned"
         );
         let mut guard = PHYS_FREELIST.lock();
@@ -378,3 +400,22 @@ impl PhysAccess for PhysMem {
         *guard = Some(ptr);
     }
 }
+
+// ---------------------------- Faults ----------------------------
+
+typesafe_ints::int_enum_only!(
+#[derive(Debug)]
+pub enum ExceptionType(usize) {
+    InsnAddressMisaligned = 0,
+    InsnAccessFault = 1,
+    IllegalInsn = 2,
+    Breakpoint = 3,
+    LoadAddressMisaligned = 4,
+    LoadAccessFault = 5,
+    StoreAmoAddressMisaligned = 6,
+    StoreAmoAccessFault = 7,
+    InsnPageFault = 12,
+    LoadPageFault = 13,
+    StoreAmoPageFault = 15,
+}
+);

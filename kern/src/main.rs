@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(asm, panic_info_message)]
+#![feature(const_fn)]
 
 mod arch;
 #[macro_use]
@@ -9,6 +10,7 @@ mod addr;
 mod globals;
 mod interrupts;
 mod isr;
+mod task;
 
 use core::fmt::Write;
 use core::{ffi::c_void, panic::PanicInfo, sync::atomic::Ordering};
@@ -16,7 +18,7 @@ use core::{ffi::c_void, panic::PanicInfo, sync::atomic::Ordering};
 use crate::arch::*;
 use crate::globals::*;
 use addr::MAX_CPUS;
-use riscv_paging::{virt_map, PageTable, PhysAddr, Pte, PteAttr, VirtAddr};
+use riscv_paging::{virt_map, PageTable, PhysAccess, PhysAddr, PteAttrs, VirtAddr};
 
 use bitvec::prelude::*;
 
@@ -74,12 +76,16 @@ fn panic_handler(info: &PanicInfo) -> ! {
 
 extern "C" {
     static SUPERVISOR_VECTORS: c_void;
-    #[link_name = "text"]
+    #[link_name = "stext"]
     static SEC_TEXT: c_void;
     #[link_name = "etext"]
     static SEC_ETEXT: c_void;
-    #[link_name = "rodata"]
+    #[link_name = "srodata"]
     static SEC_RODATA: c_void;
+    #[link_name = "erodata"]
+    static SEC_ERODATA: c_void;
+    #[link_name = "srwdata"]
+    static SEC_SRWDATA: c_void;
     #[link_name = "end"]
     static SEC_END: c_void;
 }
@@ -114,9 +120,10 @@ unsafe extern "C" fn startup() {
     // ensure SEIE, STIE, SSIE are on
     let mut sie = get_sie();
     let view = sie.view_bits_mut::<Lsb0>();
-    view.set(SIE_SEIE, true);
-    view.set(SIE_STIE, true);
-    view.set(SIE_SSIE, true);
+    // we don't take interrupts in kernel mode
+    view.set(SIE_SEIE, false);
+    view.set(SIE_STIE, false);
+    view.set(SIE_SSIE, false);
     set_sie(sie);
 
     // the 1 enables vectored mode
@@ -134,8 +141,14 @@ unsafe extern "C" fn startup() {
 
 unsafe extern "C" fn kern_main() -> ! {
     let core_id = core_id();
+
+    let endaddr = &SEC_END as *const _ as usize;
     if core_id == 0 {
         crate::print::init();
+        for page in (endaddr..addr::PHYSMEM + addr::PHYSMEM_LEN).step_by(4096) {
+            //println!("wtf {:x}", page);
+            PhysMem::free(PhysAddr::new(page))
+        }
     }
     println!("hello world from core {}!", core_id);
     // we will hit this with one core!
@@ -144,6 +157,16 @@ unsafe extern "C" fn kern_main() -> ! {
     get_sip();
 
     let root_pt = PageTable::<PhysMem>::alloc().expect("root pagetable alloc failed");
+    let satp = Satp::new(&root_pt, 0, TranslationMode::Sv39);
+
+    // sets the running task so we can hit exceptions properly
+    let task = task::FAULT_TASKS.get(core_id);
+    task.hart_id = core_id;
+    // crash stack
+    task.kernel_sp = EXCEPTION_STACKS.get(core_id).as_mut_ptr() as *mut _;
+    task.kernel_satp = satp;
+    set_running_task(task);
+
     let textaddr = &SEC_TEXT as *const _ as usize;
     let etextaddr = &SEC_ETEXT as *const _ as usize;
     virt_map(
@@ -151,26 +174,62 @@ unsafe extern "C" fn kern_main() -> ! {
         PhysAddr::new(textaddr),
         VirtAddr(textaddr),
         etextaddr.checked_sub(textaddr).unwrap(),
-        PteAttr::R | PteAttr::X,
-    );
+        PteAttrs::R | PteAttrs::X,
+    )
+    .unwrap();
 
     let rodataaddr = &SEC_RODATA as *const _ as usize;
-    let endaddr = &SEC_END as *const _ as usize;
+    let erodataaddr = &SEC_ERODATA as *const _ as usize;
     virt_map(
         root_pt,
         PhysAddr::new(rodataaddr),
         VirtAddr(rodataaddr),
-        endaddr.checked_sub(rodataaddr).unwrap(),
-        PteAttr::R.into(),
-    );
+        erodataaddr.checked_sub(rodataaddr).unwrap(),
+        PteAttrs::R.into(),
+    )
+    .unwrap();
+
+    let srwdataaddr = &SEC_SRWDATA as *const _ as usize;
+    virt_map(
+        root_pt,
+        PhysAddr::new(srwdataaddr),
+        VirtAddr(srwdataaddr),
+        endaddr.checked_sub(srwdataaddr).unwrap(),
+        PteAttrs::R | PteAttrs::W,
+    )
+    .unwrap();
 
     virt_map(
         root_pt,
-        PhysAddr::new(addr::PHYSMEM),
+        PhysAddr::new(0),
         VirtAddr(addr::PHYSMEM_MAP),
-        addr::PHYSMEM_LEN,
-        PteAttr::R | PteAttr::W,
-    );
+        addr::PHYSMEM_LEN + addr::PHYSMEM,
+        PteAttrs::R | PteAttrs::W,
+    )
+    .unwrap();
+
+    virt_map(
+        root_pt,
+        PhysAddr::new(addr::UART0),
+        VirtAddr(addr::UART0),
+        addr::UART0LEN,
+        PteAttrs::R | PteAttrs::W,
+    )
+    .unwrap();
+
+    // TODO: this is probably actually not usable from S-mode so we can probably
+    // not map it
+    virt_map(
+        root_pt,
+        PhysAddr::new(addr::CLINT),
+        VirtAddr(addr::CLINT),
+        addr::CLINT_LEN,
+        PteAttrs::R | PteAttrs::W,
+    )
+    .unwrap();
+
+    set_satp(satp);
+    (0 as *mut u8).write_volatile(0);
 
     panic!("test test test!!");
 

@@ -8,6 +8,7 @@ SECTIONS {
     . = 0x80000000;
 
     .text : {
+        PROVIDE(stext = .);
         /* 
          * force the entry point to the start. I have no god damn idea how this
          * linker works or why it works for xv6...
@@ -27,13 +28,16 @@ SECTIONS {
 
     .rodata : {
         . = ALIGN(16);
+        PROVIDE(srodata = .);
         *(.srodata .srodata.*) /* apparently these are the same as rodata for rv64 ? */
         . = ALIGN(16);
         *(.rodata .rodata.*)
+        PROVIDE(erodata = .);
     }
 
     .data : {
-        . = ALIGN(16);
+        . = ALIGN(4096);
+        PROVIDE(srwdata = .);
         *(.sdata .sdata.*)
         . = ALIGN(16);
         *(.data .data.*)
@@ -45,6 +49,10 @@ SECTIONS {
         . = ALIGN(16);
         *(.bss .bss.*)
     }
+    /*
+    be extra super careful to not cause bugs when we make the free list initially
+    */
+    . = ALIGN(4096);
 
     PROVIDE(end = .);
 }

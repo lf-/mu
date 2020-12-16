@@ -3,17 +3,13 @@
 #![cfg(all(target_pointer_width = "64", target_arch = "riscv64"))]
 #![feature(slice_fill)]
 #![feature(asm)]
+#![feature(try_trait)]
 #![no_std]
 
-use core::ptr;
 use core::{marker::PhantomData, mem};
+use core::{option::NoneError, ptr};
 
 use bitvec::prelude::*;
-
-/// The first free page. This may be null if either the free list is not
-/// initialized yet
-// pub static PHYS_FIRST_FREE: UnsafeCell<AtomicPtr<PhysPageMetadata>> =
-//     UnsafeCell::new(AtomicPtr::new(ptr::null_mut()));
 
 /// Page table entry.
 ///
@@ -43,34 +39,6 @@ pub struct Phys<T, P: PhysAccess> {
 /// A newtype wrapper around a virtual address.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VirtAddr(pub usize);
-
-/// Attributes you can set on a page table entry.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy)]
-pub enum PteAttr {
-    /// Page has been modified. Set to 1 if this feature is unused.
-    Dirty = 1 << 7,
-    /// Page has been accessed. Set to 1 if this feature is unused.
-    Accessed = 1 << 6,
-    /// Page is mapped in all address spaces (i.e. for all ASIDs).
-    Global = 1 << 5,
-    /// Page is accessible by user mode; page is *in*accessible by supervisor
-    /// mode if `mstatus.SUM = 0`
-    User = 1 << 4,
-    /// Page executable
-    X = 1 << 3,
-    /// Page writable
-    W = 1 << 2,
-    /// Page readable
-    R = 1 << 1,
-    /// Valid PTE
-    V = 1 << 0,
-}
-
-/// A fancy type safe flags structure for page table attributes. See [PteAttr]
-/// for attributes you can add here.
-#[derive(Clone, Copy, Debug)]
-pub struct PteAttrs(u8);
 
 impl<T, P: PhysAccess> Phys<T, P> {
     /// Makes a new Phys from a raw usize interpreted as a physical pointer
@@ -106,55 +74,35 @@ impl<P: PhysAccess> PhysAddr<P> {
     pub fn get(self) -> usize {
         self.0
     }
-}
 
-impl From<PteAttrs> for u8 {
-    fn from(a: PteAttrs) -> Self {
-        a.0
+    /// is the given address aligned to a page
+    pub fn is_page_aligned(self) -> bool {
+        self.0 & PAGE_MASK == 0
     }
 }
 
-impl From<PteAttr> for PteAttrs {
-    fn from(a: PteAttr) -> Self {
-        PteAttrs(a as u8)
+bitflags::bitflags!(
+    /// Attributes you can set on a page table entry.
+    pub struct PteAttrs: u8 {
+        /// Page has been modified. Set to 1 if this feature is unused.
+        const Dirty = 1 << 7;
+        /// Page has been accessed. Set to 1 if this feature is unused.
+        const Accessed = 1 << 6;
+        /// Page is mapped in all address spaces (i.e. for all ASIDs).
+        const Global = 1 << 5;
+        /// Page is accessible by user mode; page is *in*accessible by supervisor
+        /// mode if `mstatus.SUM = 0`
+        const User = 1 << 4;
+        /// Page executable
+        const X = 1 << 3;
+        /// Page writable
+        const W = 1 << 2;
+        /// Page readable
+        const R = 1 << 1;
+        /// Valid PTE
+        const V = 1 << 0;
     }
-}
-
-impl core::ops::BitOr<PteAttr> for PteAttr {
-    type Output = PteAttrs;
-
-    fn bitor(self, rhs: PteAttr) -> Self::Output {
-        PteAttrs(self as u8 | rhs as u8)
-    }
-}
-
-impl core::ops::BitOr<PteAttr> for PteAttrs {
-    type Output = PteAttrs;
-
-    fn bitor(self, rhs: PteAttr) -> Self::Output {
-        PteAttrs(self.0 | rhs as u8)
-    }
-}
-
-impl core::ops::BitOr<PteAttrs> for PteAttrs {
-    type Output = PteAttrs;
-
-    fn bitor(self, rhs: PteAttrs) -> Self::Output {
-        PteAttrs(self.0 | rhs.0)
-    }
-}
-
-impl PteAttrs {
-    pub const NONE: PteAttrs = PteAttrs(0);
-
-    fn has(self, attr: PteAttr) -> bool {
-        self.0 & attr as u8 != 0
-    }
-
-    fn has_any(self, attrs: PteAttrs) -> bool {
-        self.0 & attrs.0 != 0
-    }
-}
+);
 
 impl Pte {
     /// Makes a page table entry with the given attributes
@@ -164,14 +112,17 @@ impl Pte {
         let h = inner.view_bits_mut::<Lsb0>();
         // PPN
         h[10..=53].store(a[12..=55].load::<u64>());
-        h[0..=7].store(u8::from(attrs));
+        h[0..=7].store(attrs.bits());
         Pte(inner)
     }
 
     /// Decomposes a page table entry into attributes and next PPN
     fn decompose(self) -> (u64, PteAttrs) {
         let h = self.0.view_bits::<Lsb0>();
-        (h[10..=53].load(), PteAttrs(h[0..=7].load()))
+        (
+            h[10..=53].load(),
+            PteAttrs::from_bits_truncate(h[0..=7].load()),
+        )
     }
 }
 
@@ -206,11 +157,17 @@ impl<P: PhysAccess> PageTable<P> {
     /// Creates a PageTable based at the given address
     pub unsafe fn from_raw(base: Phys<Pte, P>) -> PageTable<P> {
         assert!(
-            base.addr.0 & PAGE_MASK == base.addr.0,
+            base.addr.is_page_aligned(),
             "base addr must be aligned to a page"
         );
         PageTable { base }
     }
+
+    /// Gets the base address
+    pub fn get_base(&self) -> PhysAddr<P> {
+        unsafe { self.base.addr() }
+    }
+
     /// Allocates a page table and zeroes it
     pub unsafe fn alloc() -> Option<PageTable<P>> {
         let allocation = P::alloc()?;
@@ -240,13 +197,18 @@ impl VirtAddr {
 
     /// Aligns the address to a page
     fn page_aligned(self) -> VirtAddr {
-        VirtAddr(self.0 & PAGE_MASK)
+        VirtAddr(self.0 & !PAGE_MASK)
     }
 
     /// Decomposes the address into an array VPN[0], VPN[1], VPN[2]
     fn parts(self) -> [u16; 3] {
         let h = self.0.view_bits::<Lsb0>();
         [h[12..=20].load(), h[21..=29].load(), h[30..=38].load()]
+    }
+
+    /// is the given address aligned to a page
+    pub fn is_page_aligned(self) -> bool {
+        self.0 & PAGE_MASK == 0
     }
 }
 
@@ -269,11 +231,19 @@ unsafe fn virt_map_one<P: PhysAccess>(
     pa: PhysAddr<P>,
     va: VirtAddr,
     attrs: PteAttrs,
-) -> Option<()> {
+) -> Result<(), MapError> {
     // there is no reason you would want to map something invalid
-    let attrs = attrs | PteAttr::V;
+    let attrs = attrs | PteAttrs::V;
 
-    let pa = PhysAddr::<P>::new(pa.get() & PAGE_MASK);
+    assert!(
+        pa.is_page_aligned(),
+        "mapped phys address must be page aligned"
+    );
+    assert!(
+        va.is_page_aligned(),
+        "mapped virt address must be page aligned"
+    );
+    let pa = PhysAddr::<P>::new(pa.get());
     let va = va.canonicalize().page_aligned();
     let va_parts = va.parts();
 
@@ -286,15 +256,15 @@ unsafe fn virt_map_one<P: PhysAccess>(
         level = i;
 
         let (next_ppn, attrs) = pte.decompose();
-        if !attrs.has(PteAttr::V) {
+        if !attrs.contains(PteAttrs::V) {
             // if we hit an invalid entry, we're done as that's where we need
             // to start inserting entries.
             break;
         }
 
-        if attrs.has_any(PteAttr::R | PteAttr::X) {
+        if attrs.intersects(PteAttrs::R | PteAttrs::X) {
             // it's a leaf page, it's already mapped! oops! leave!
-            return None;
+            return Err(MapError::AlreadyMapped);
         }
 
         assert!(
@@ -310,7 +280,7 @@ unsafe fn virt_map_one<P: PhysAccess>(
     for i in (1..=level).rev() {
         let entry = table.base.as_ptr().offset(va_parts[i] as isize);
         let next_pt = PageTable::<P>::alloc()?;
-        *entry = Pte::new(next_pt.base.addr(), PteAttr::V.into());
+        *entry = Pte::new(next_pt.base.addr(), PteAttrs::V);
         table = next_pt;
     }
 
@@ -326,7 +296,21 @@ unsafe fn virt_map_one<P: PhysAccess>(
     // For the minute, we will clear the TLB for the task's ASID on task entry.
     // It's easy but not very good.
     invalidate_cache(va);
-    Some(())
+    Ok(())
+}
+
+#[derive(Debug)]
+pub enum MapError {
+    /// probably an arithmetic overflow
+    NoneError,
+    /// address already has been mapped on some level of the page table
+    AlreadyMapped,
+}
+
+impl core::convert::From<NoneError> for MapError {
+    fn from(_: NoneError) -> Self {
+        MapError::NoneError
+    }
 }
 
 /// Maps `len` worth of pages at `pa` to pages starting at the virtual address
@@ -345,12 +329,12 @@ pub unsafe fn virt_map<P: PhysAccess>(
     va: VirtAddr,
     len: usize,
     attrs: PteAttrs,
-) -> Option<()> {
+) -> Result<(), MapError> {
     assert!(len > 0, "len must be >0");
     // round len up to the nearest page
     let len = (len.checked_add(PAGE_SIZE as usize - 1)?) & !(PAGE_SIZE as usize - 1);
 
-    for offs in (0..=len).step_by(PAGE_SIZE as _) {
+    for offs in (0..len).step_by(PAGE_SIZE as _) {
         virt_map_one(
             root_pt,
             PhysAddr::new(pa.get().checked_add(offs)?),
@@ -359,7 +343,7 @@ pub unsafe fn virt_map<P: PhysAccess>(
         )?;
     }
 
-    Some(())
+    Ok(())
 }
 
 #[cfg(test)]

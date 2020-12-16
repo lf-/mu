@@ -3,7 +3,7 @@ QEMU = /opt/qemu/bin/qemu-system-riscv64
 GDB = /opt/gdb/bin/gdb
 # TODO: UP for the minute
 CPUS = 1
-KERNEL = target/riscv64imac-unknown-none-elf/debug/kern
+KERNEL = target/riscv64imac-unknown-none-elf/release/kern
 
 QEMUOPTS = -machine virt -bios none -kernel $(KERNEL) -m 128M -smp $(CPUS) -nographic
 # debug on port 1234
@@ -13,7 +13,7 @@ QEMUOPTS = -machine virt -bios none -kernel $(KERNEL) -m 128M -smp $(CPUS) -nogr
 
 .PHONY: qemu cargo
 cargo:
-	cargo build
+	cargo build --release
 
 qemu: cargo
 	$(QEMU) $(QEMUOPTS)

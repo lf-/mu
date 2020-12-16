@@ -22,6 +22,9 @@ default-features = false
 [dependencies.riscv_paging]
 path = "../crates/riscv_paging"
 
+[dependencies.typesafe_ints]
+path = "../crates/typesafe_ints"
+
 [dependencies.fidget_spinner]
 path = "../crates/fidget_spinner"
 

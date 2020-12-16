@@ -25,7 +25,9 @@
 pub const MAX_CPUS: usize = 8;
 
 pub const UART0: usize = 0x1000_0000;
+pub const UART0LEN: usize = 0x1000;
 pub const CLINT: usize = 0x200_0000;
+pub const CLINT_LEN: usize = 0x10000;
 pub const PHYSMEM: usize = 0x8000_0000;
 // 128 MiB
 pub const PHYSMEM_LEN: usize = 128 * 1024 * 1024;

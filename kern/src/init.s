@@ -11,7 +11,7 @@ _entry:
 
     // set up a stack
     la sp, STACKS
-    li a0, 8192      // use 8k stacks
+    li a0, 16384     // use 16k stacks
     csrr a1, mhartid // get the hart (core) id
 
     // we want to get the pointer to the top of the (descending) stack

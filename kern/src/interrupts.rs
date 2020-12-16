@@ -62,6 +62,7 @@ extern "C" {
     static MACHINE_VECTORS: c_void;
 }
 
+// TODO: this function should be rewritten, possibly in asm
 pub unsafe fn init_timers() {
     let hart = arch::m_core_id();
 
@@ -81,7 +82,7 @@ pub unsafe fn init_timers() {
     };
 
     // we are using non-vectored interrupt mode; set the machine trap vector
-    arch::set_mtvec(&MACHINE_VECTORS as *const c_void as u64);
+    arch::set_mtvec(&MACHINE_VECTORS as *const c_void as u64 | 1);
     arch::set_mscratch(&mut TIMER_ISR_DATA[hart] as *mut TimerIsrData as usize);
 
     // turn on machine interrupts
