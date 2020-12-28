@@ -15,8 +15,10 @@ QEMUOPTS = -machine virt -bios none -kernel $(KERNEL) -m 128M -smp $(CPUS) -nogr
 cargo:
 	cargo build --release
 
+# always open a gdb socket but only block if we request a debugger. reasoning:
+# the qemu monitor is rather broken and e.g. doesn't allow reading regs
 qemu: cargo
-	$(QEMU) $(QEMUOPTS)
+	$(QEMU) $(QEMUOPTS) -s
 
 qemu-gdb: cargo
 	@echo "Run 'make gdb' in another terminal to connect"
