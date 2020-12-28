@@ -8,12 +8,14 @@ use core::ptr;
 use core::slice;
 
 use bitvec::prelude::*;
+use log::{Level, LevelFilter};
 
 use crate::arch::Arch;
 use fidget_spinner::Mutex;
 
 pub static SERIAL_PORT: Mutex<Option<Serial>, Arch> = Mutex::new(None);
 pub static PRINT_LOCK: Mutex<(), Arch> = Mutex::new(());
+static LOGGER: Logger = Logger;
 
 /// Receiver Buffer Register
 const REG_RBR: isize = 0x00;
@@ -119,6 +121,24 @@ impl Serial {
     }
 }
 
+struct Logger;
+
+impl log::Log for Logger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() >= Level::Info
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            crate::println!("{} :: {}", record.level(), record.args());
+        }
+    }
+
+    fn flush(&self) {
+        // there is no log buffering
+    }
+}
+
 /// Initialize the serial port
 pub fn init() {
     // TODO: there is a bug here: we need to disable interrupts while we have this lock held
@@ -127,6 +147,9 @@ pub fn init() {
     let mut serial = unsafe { Serial::new(crate::addr::UART0 as *mut _) };
     serial.init(Baudrate::B38400);
     *guard = Some(serial);
+    log::set_logger(&LOGGER)
+        .map(|_| log::set_max_level(LevelFilter::Info))
+        .unwrap();
 }
 
 pub struct SerialWriter;
@@ -165,4 +188,26 @@ macro_rules! println {
         );
         let _ = core::fmt::Write::write_str(writer, "\n");
     }}
+}
+
+// stolen from libstd
+#[macro_export]
+macro_rules! dbg {
+    () => {
+        $crate::println!("[{}:{}]", $crate::file!(), $crate::line!());
+    };
+    ($val:expr $(,)?) => {
+        // Use of `match` here is intentional because it affects the lifetimes
+        // of temporaries - https://stackoverflow.com/a/48732525/1063961
+        match $val {
+            tmp => {
+                $crate::println!("[{}:{}] {} = {:#?}",
+                    $crate::file!(), $crate::line!(), $crate::stringify!($val), &tmp);
+                tmp
+            }
+        }
+    };
+    ($($val:expr),+ $(,)?) => {
+        ($($crate::dbg!($val)),+,)
+    };
 }

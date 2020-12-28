@@ -17,10 +17,15 @@ use core::{ffi::c_void, panic::PanicInfo, sync::atomic::Ordering};
 
 use crate::arch::*;
 use crate::globals::*;
-use addr::MAX_CPUS;
-use riscv_paging::{virt_map, PageTable, PhysAccess, PhysAddr, PteAttrs, VirtAddr};
+use addr::{MAX_CPUS, PHYSMEM_LEN};
+use riscv_paging::{
+    resolve, virt_map, virt_map_one, PageSize, PageTable, PhysAccess, PhysAddr, PteAttrs, VirtAddr,
+};
 
 use bitvec::prelude::*;
+use log::info;
+
+const BANNER: &'static str = include_str!("logo.txt");
 
 #[panic_handler]
 fn panic_handler(info: &PanicInfo) -> ! {
@@ -71,7 +76,7 @@ fn panic_handler(info: &PanicInfo) -> ! {
         let _ = write!(serial, "@ {}\n", loc);
     }
 
-    loop {}
+    freeze_hart()
 }
 
 extern "C" {
@@ -149,8 +154,12 @@ unsafe extern "C" fn kern_main() -> ! {
             //println!("wtf {:x}", page);
             PhysMem::free(PhysAddr::new(page))
         }
+        println!("{}", BANNER);
+    } else {
+        // you know what, I don't want to deal with other cores
+        loop {}
     }
-    println!("hello world from core {}!", core_id);
+    info!("booting core {}", core_id);
     // we will hit this with one core!
     // println!("hello world from risc-v!!");
     get_sstatus();
@@ -199,14 +208,16 @@ unsafe extern "C" fn kern_main() -> ! {
     )
     .unwrap();
 
-    virt_map(
-        root_pt,
-        PhysAddr::new(0),
-        VirtAddr(addr::PHYSMEM_MAP),
-        addr::PHYSMEM_LEN + addr::PHYSMEM,
-        PteAttrs::R | PteAttrs::W,
-    )
-    .unwrap();
+    for offs in (0..PHYSMEM_LEN).step_by(PageSize::Page1g.size()) {
+        virt_map_one(
+            root_pt,
+            PhysAddr::new(offs),
+            VirtAddr(addr::PHYSMEM_MAP + offs),
+            PageSize::Page1g,
+            PteAttrs::R | PteAttrs::W,
+        )
+        .unwrap();
+    }
 
     virt_map(
         root_pt,

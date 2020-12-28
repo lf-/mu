@@ -33,4 +33,4 @@ pub const PHYSMEM: usize = 0x8000_0000;
 pub const PHYSMEM_LEN: usize = 128 * 1024 * 1024;
 
 pub const MAX_VIRT: usize = 0x80_0000_0000;
-pub const PHYSMEM_MAP: usize = 0x50_0000_0000;
+pub const PHYSMEM_MAP: usize = 0x60_0000_0000;

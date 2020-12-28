@@ -1,9 +1,10 @@
 //! A memory manager for RISC-V. Currently only Sv39 is supported (512GB address
 //! space).
-#![cfg(all(target_pointer_width = "64", target_arch = "riscv64"))]
+#![cfg(any(all(target_pointer_width = "64", test), target_arch = "riscv64"))]
 #![feature(slice_fill)]
 #![feature(asm)]
 #![feature(try_trait)]
+#![allow(non_upper_case_globals)]
 #![no_std]
 
 use core::{marker::PhantomData, mem};
@@ -11,34 +12,143 @@ use core::{option::NoneError, ptr};
 
 use bitvec::prelude::*;
 
-/// Page table entry.
-///
-/// Format:
-/// ```text
-///  63  54  53  28   27  19   18  10   9 8   7      0
-/// | ZERO | PPN[2] | PPN[1] | PPN[0] | RSW | DAGUXWRV |
-/// +--9---+--26----+---9----+---9----+--2--+----8-----+
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct Pte(u64);
+pub const PAGE_SIZE: u64 = 4096;
+pub const PT_ENTRIES: usize = PAGE_SIZE as usize / mem::size_of::<Pte>();
+pub const PAGE_MASK: usize = PAGE_SIZE as usize - 1;
 
 /// A newtype wrapper around a physical address.
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub struct PhysAddr<P: PhysAccess>(usize, PhantomData<P>);
+
+/// A newtype wrapper around a virtual address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VirtAddr(pub usize);
+
+/// Operations that can be performed on a memory address
+pub trait Addr: Copy {
+    /// Returns the numeric value of the address
+    fn get(self) -> usize;
+
+    /// Makes an [`Addr`] instance for a numeric address
+    fn new(addr: usize) -> Self;
+
+    /// is the given address aligned to a page
+    fn is_page_aligned(self, size: PageSize) -> bool {
+        self.get() & size.offs_mask() == 0
+    }
+
+    /// Given a fallible mapping function `f`, map the numeric value of the
+    /// address to another value
+    fn map_r<F>(self, f: F) -> Result<Self, MapError>
+    where
+        F: FnOnce(usize) -> Result<usize, MapError>,
+    {
+        Ok(Self::new(f(self.get())?))
+    }
+
+    /// Given a mapping function `f`, map the numeric value of the address to
+    /// another value
+    fn map<F>(self, f: F) -> Self
+    where
+        F: FnOnce(usize) -> usize,
+    {
+        Self::new(f(self.get()))
+    }
+
+    /// Rounds the address up to the [`PageSize`] given
+    fn round_up(self, size: PageSize) -> Option<Self> {
+        Some(Self::new(
+            self.get().checked_add(size.offs_mask())? & !(size.offs_mask()),
+        ))
+    }
+
+    fn round_down(self, size: PageSize) -> Option<Self> {
+        Some(Self::new(self.get() & !size.offs_mask()))
+    }
+}
+
+impl<P: PhysAccess> PhysAddr<P> {
+    pub fn new(addr: usize) -> PhysAddr<P> {
+        PhysAddr(addr, PhantomData)
+    }
+}
+
+// apparently I have to impl these myself because it tries to generate bounds
+// on my value of P, which does not matter to equality/ordering
+
+impl<P: PhysAccess, T> core::fmt::Debug for Phys<T, P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Phys({:016x})", self.addr.0)
+    }
+}
+
+impl<P: PhysAccess> core::fmt::Debug for PhysAddr<P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "PhysAddr({:016x})", self.0)
+    }
+}
+
+impl<P: PhysAccess> PartialEq for PhysAddr<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq(&other.0)
+    }
+}
+
+impl<P: PhysAccess> Eq for PhysAddr<P> {}
+
+impl<P: PhysAccess> PartialOrd for PhysAddr<P> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
+impl<P: PhysAccess> Ord for PhysAddr<P> {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl<P: PhysAccess> Addr for PhysAddr<P> {
+    fn new(addr: usize) -> Self {
+        Self(addr, PhantomData)
+    }
+
+    fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl VirtAddr {
+    /// Only considers the lower 39 bits, chopping off the top bits
+    fn canonicalize(self) -> VirtAddr {
+        VirtAddr(self.0.view_bits::<Lsb0>()[0..=38].load())
+    }
+
+    /// Decomposes the address into an array VPN[0], VPN[1], VPN[2]
+    fn parts(self) -> [u16; 3] {
+        let h = self.0.view_bits::<Lsb0>();
+        [h[12..=20].load(), h[21..=29].load(), h[30..=38].load()]
+    }
+}
+
+impl Addr for VirtAddr {
+    fn get(self) -> usize {
+        self.0
+    }
+
+    fn new(addr: usize) -> Self {
+        VirtAddr(addr)
+    }
+}
 
 /// A pointer to an object in physical memory
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Phys<T, P: PhysAccess> {
     addr: PhysAddr<P>,
     typ: PhantomData<T>,
 }
-
-/// A newtype wrapper around a virtual address.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct VirtAddr(pub usize);
 
 impl<T, P: PhysAccess> Phys<T, P> {
     /// Makes a new Phys from a raw usize interpreted as a physical pointer
@@ -66,20 +176,19 @@ impl<T, P: PhysAccess> Phys<T, P> {
     }
 }
 
-impl<P: PhysAccess> PhysAddr<P> {
-    pub fn new(addr: usize) -> PhysAddr<P> {
-        PhysAddr(addr, PhantomData)
-    }
+//==============================================================================
 
-    pub fn get(self) -> usize {
-        self.0
-    }
-
-    /// is the given address aligned to a page
-    pub fn is_page_aligned(self) -> bool {
-        self.0 & PAGE_MASK == 0
-    }
-}
+/// Page table entry.
+///
+/// Format:
+/// ```text
+///  63  54  53  28   27  19   18  10   9 8   7      0
+/// | ZERO | PPN[2] | PPN[1] | PPN[0] | RSW | DAGUXWRV |
+/// +--9---+--26----+---9----+---9----+--2--+----8-----+
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct Pte(u64);
 
 bitflags::bitflags!(
     /// Attributes you can set on a page table entry.
@@ -126,6 +235,13 @@ impl Pte {
     }
 }
 
+impl core::fmt::Debug for Pte {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let (ppn, flags) = self.decompose();
+        write!(f, "Pte(ppn={:016x}, flags={:?})", ppn, flags)
+    }
+}
+
 /// Stores our linked list free-list of physical memory pages, as well as other
 /// metadata on unused pages (currently not sure on what that will be)
 #[derive(Clone, Copy, Debug)]
@@ -157,10 +273,17 @@ impl<P: PhysAccess> PageTable<P> {
     /// Creates a PageTable based at the given address
     pub unsafe fn from_raw(base: Phys<Pte, P>) -> PageTable<P> {
         assert!(
-            base.addr.is_page_aligned(),
+            base.addr.is_page_aligned(PageSize::Page4k),
             "base addr must be aligned to a page"
         );
         PageTable { base }
+    }
+
+    /// Gets the entry at the index `num` in the page table. Panics if it is out
+    /// of range (this is always a bug).
+    pub unsafe fn entry(&self, num: u16) -> Pte {
+        assert!(num < PT_ENTRIES as u16, "page table entry out of range");
+        self.base.as_ptr().offset(num as isize).read_volatile()
     }
 
     /// Gets the base address
@@ -185,31 +308,72 @@ impl<P: PhysAccess> PageTable<P> {
     }
 }
 
-pub const PAGE_SIZE: u64 = 4096;
-pub const PT_ENTRIES: usize = PAGE_SIZE as usize / mem::size_of::<Pte>();
-pub const PAGE_MASK: usize = PAGE_SIZE as usize - 1;
+/// The size of a page
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PageSize {
+    Page4k = 0,
+    Page2m = 1,
+    Page1g = 2,
+}
 
-impl VirtAddr {
-    /// Only considers the lower 39 bits, chopping off the top bits
-    fn canonicalize(self) -> VirtAddr {
-        VirtAddr(self.0.view_bits::<Lsb0>()[0..=38].load())
+impl PageSize {
+    /// An iterator of page sizes in descending size order
+    const SIZES_DESC: [PageSize; 3] = [PageSize::Page1g, PageSize::Page2m, PageSize::Page4k];
+
+    /// Returns the numeric size of the page.
+    #[inline]
+    pub fn size(&self) -> usize {
+        match self {
+            PageSize::Page4k => 4096,
+            PageSize::Page2m => 2 * 1024 * 1024,
+            PageSize::Page1g => 1 * 1024 * 1024 * 1024,
+        }
     }
 
-    /// Aligns the address to a page
-    fn page_aligned(self) -> VirtAddr {
-        VirtAddr(self.0 & !PAGE_MASK)
+    /// Gets the mask to get the offset of an address with respect to the
+    /// [`PageSize`]
+    #[inline]
+    pub fn offs_mask(&self) -> usize {
+        self.size() - 1
     }
+}
 
-    /// Decomposes the address into an array VPN[0], VPN[1], VPN[2]
-    fn parts(self) -> [u16; 3] {
-        let h = self.0.view_bits::<Lsb0>();
-        [h[12..=20].load(), h[21..=29].load(), h[30..=38].load()]
-    }
+/// The result of walking the page table for some virtual address.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PageWalkResult {
+    /// The up to three Ptes that are encountered on the walk
+    pub parts: [Option<Pte>; 3],
 
-    /// is the given address aligned to a page
-    pub fn is_page_aligned(self) -> bool {
-        self.0 & PAGE_MASK == 0
+    /// If the resolution succeeded, this will be Some with the last level PTE
+    pub last_level: Option<Pte>,
+}
+
+pub unsafe fn resolve<P: PhysAccess>(
+    root_pt: PageTable<P>,
+    va: VirtAddr,
+) -> Result<PageWalkResult, MapError> {
+    let parts = va.parts();
+    let mut res: PageWalkResult = Default::default();
+    let mut pt = root_pt;
+    for level in (0..=2).rev() {
+        let part = parts[level];
+        let p = pt.base.as_ptr().offset(part as isize);
+        let pte = pt.entry(part);
+        let (pnum, attrs) = pte.decompose();
+        res.parts[level] = Some(pte);
+
+        if !attrs.contains(PteAttrs::V) {
+            // invalid entry
+            break;
+        }
+        if attrs.intersects(PteAttrs::R | PteAttrs::X) {
+            // last level entry
+            res.last_level = Some(pte);
+            return Ok(res);
+        }
+        pt = PageTable::from_raw(Phys::new_raw((pnum * PAGE_SIZE) as usize));
     }
+    Ok(res)
 }
 
 /// Invalidates the page table cache for all the asids for the given address
@@ -226,31 +390,32 @@ unsafe fn invalidate_cache(vaddr: VirtAddr) {
 /// access, and that interrupts are disabled.
 ///
 /// Fails if it is trying to map something already mapped.
-unsafe fn virt_map_one<P: PhysAccess>(
+pub unsafe fn virt_map_one<P: PhysAccess>(
     root_pt: PageTable<P>,
     pa: PhysAddr<P>,
     va: VirtAddr,
+    size: PageSize,
     attrs: PteAttrs,
 ) -> Result<(), MapError> {
     // there is no reason you would want to map something invalid
     let attrs = attrs | PteAttrs::V;
 
     assert!(
-        pa.is_page_aligned(),
+        pa.is_page_aligned(size),
         "mapped phys address must be page aligned"
     );
     assert!(
-        va.is_page_aligned(),
+        va.is_page_aligned(size),
         "mapped virt address must be page aligned"
     );
     let pa = PhysAddr::<P>::new(pa.get());
-    let va = va.canonicalize().page_aligned();
+    let va = va.canonicalize().round_up(PageSize::Page4k)?;
     let va_parts = va.parts();
 
     let mut table = root_pt;
     let mut pte_addr;
     let mut level = 2;
-    for i in (0..=2).rev() {
+    for i in (size as usize..=2).rev() {
         pte_addr = table.base.as_ptr().offset(va_parts[i] as isize);
         let pte = pte_addr.read();
         level = i;
@@ -277,16 +442,16 @@ unsafe fn virt_map_one<P: PhysAccess>(
     }
 
     // we need to allocate some page tables now if we are not at level 0 already
-    for i in (1..=level).rev() {
+    for i in (size as usize + 1..=level).rev() {
         let entry = table.base.as_ptr().offset(va_parts[i] as isize);
         let next_pt = PageTable::<P>::alloc()?;
-        *entry = Pte::new(next_pt.base.addr(), PteAttrs::V);
+        entry.write(Pte::new(next_pt.base.addr(), PteAttrs::V));
         table = next_pt;
     }
 
-    // we have now reached level 0 and table points to the level 0 table
-    let entry = table.base.as_ptr().offset(va_parts[0] as isize);
-    *entry = Pte::new(pa, attrs);
+    // we have now reached level `size` and table points to the last level table
+    let entry = table.base.as_ptr().offset(va_parts[size as usize] as isize);
+    entry.write(Pte::new(pa, attrs));
     // TODO: We probably have to have some kind of TLB shootdown thing.
     // or cooperative thing. The reason for this is that the task might get
     // migrated to another core where the bad address is still cached in a TLB
@@ -303,6 +468,8 @@ unsafe fn virt_map_one<P: PhysAccess>(
 pub enum MapError {
     /// probably an arithmetic overflow
     NoneError,
+    /// given addresses are unaligned
+    Unaligned,
     /// address already has been mapped on some level of the page table
     AlreadyMapped,
 }
@@ -332,13 +499,14 @@ pub unsafe fn virt_map<P: PhysAccess>(
 ) -> Result<(), MapError> {
     assert!(len > 0, "len must be >0");
     // round len up to the nearest page
-    let len = (len.checked_add(PAGE_SIZE as usize - 1)?) & !(PAGE_SIZE as usize - 1);
+    let len = len;
 
     for offs in (0..len).step_by(PAGE_SIZE as _) {
         virt_map_one(
             root_pt,
             PhysAddr::new(pa.get().checked_add(offs)?),
             VirtAddr(va.0.checked_add(offs)?),
+            PageSize::Page4k,
             attrs,
         )?;
     }
@@ -346,12 +514,80 @@ pub unsafe fn virt_map<P: PhysAccess>(
     Ok(())
 }
 
+/*
+/// Performs the same function as [`virt_map`] but uses large pages automatically
+///
+/// If you use this, you may have a hard time if you want to unmap part of a
+/// large page backed region.
+pub unsafe fn virt_map_large<P: PhysAccess>(
+    root_pt: PageTable<P>,
+    pa: PhysAddr<P>,
+    va: VirtAddr,
+    len: usize,
+    attrs: PteAttrs,
+) -> Result<(), MapError> {
+    /*
+    Start | MaxAlignRegion | End
+    4k* 2m*     1g*          2m* 4k*
+    */
+    if !pa.is_page_aligned(PageSize::Page4k) || !pa.is_page_aligned(PageSize::Page4k) {
+        return Err(MapError::Unaligned);
+    }
+    assert!(len > PAGE_SIZE as usize);
+
+    let end_pa = pa.map_r(|a| Ok(a.checked_add(len)?))?;
+    let end_va = va.map_r(|a| Ok(a.checked_add(len)?))?;
+
+    let mut max_pgsz = PageSize::Page4k;
+    for pgsz in PageSize::SIZES_DESC.iter() {
+        max_pgsz = *pgsz;
+        if va.round_up(*pgsz)? < end_va && pa.round_up(*pgsz)? < end_pa {
+            // region can fit that size
+            break;
+        }
+    }
+    let max_start = va.round_up(max_pgsz)?.0 - va.0;
+    let max_end = end_va.round_down(max_pgsz)?.0 - va.0;
+
+    // start_va |----------------|---------------------|--------------| end_va
+    //                           ^ max_start | max_end ^
+    //           <-remain_start->                       <-remain_end->
+
+    // first try to grab a 1G region, then a 2M region, then a 4k region for the body
+
+    // for pgsz in PageSize::SIZES_DESC.iter() {
+    //     max_align = *pgsz;
+    //     if (pgsz.offs_mask() & pa.get()) == pa.get() || (pgsz.offs_mask() & va.0) == va.0 {
+    //         break;
+    //     }
+    // }
+
+    // now we have the max alignment of the start of the region
+    todo!()
+}*/
+
 #[cfg(test)]
 mod test {
     use super::*;
     #[test]
     fn test_canonicalize() {
         let addr = 0xff00_0010_1234_5789;
-        assert_eq!(canonicalize(VirtAddr(addr)).0, 0x0000_0010_1234_5789);
+        assert_eq!(VirtAddr(addr).canonicalize().0, 0x0000_0010_1234_5789);
+    }
+
+    #[test]
+    fn test_rounding() {
+        for a in 1..=4096 {
+            let va = VirtAddr(a);
+            assert_eq!(VirtAddr(4096), va.round_up(PageSize::Page4k).unwrap());
+        }
+
+        for a in 1..=2 * 1024 * 1024 {
+            let va = VirtAddr(a);
+            assert_eq!(
+                VirtAddr(2 * 1024 * 1024),
+                va.round_up(PageSize::Page2m).unwrap()
+            );
+        }
     }
 }

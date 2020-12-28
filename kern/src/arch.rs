@@ -5,7 +5,7 @@ use core::ops::RangeInclusive;
 use core::ptr;
 
 use fidget_spinner::ArchDetails;
-use riscv_paging::{PageTable, PhysAccess, PhysPageMetadata, PAGE_SIZE};
+use riscv_paging::{Addr, PageSize, PageTable, PhysAccess, PhysPageMetadata, PAGE_SIZE};
 use riscv_paging::{PhysAddr, PAGE_MASK};
 
 use bitvec::prelude::*;
@@ -201,7 +201,19 @@ csrw!(
 
 csrw!("Sets the supervisor trap vector", set_stvec, stvec, u64);
 
-csrr!("Gets the supervisor status register", get_sstatus, sstatus);
+csrr!(
+    "Gets the supervisor status register",
+    get_sstatus,
+    sstatus,
+    struct StatusReg
+);
+
+csrw!(
+    "Sets the supervisor status register",
+    set_sstatus,
+    sstatus,
+    struct StatusReg
+);
 
 // ------------- Unprivileged Instructions ---------------
 
@@ -224,6 +236,22 @@ pub fn core_id() -> usize {
             options(nomem, nostack)
         );
         tp
+    }
+}
+
+/// Freezes a hart unrecoverably.
+///
+/// This is accomplished by turning off interrupts to S mode and then executing
+/// `wfi`s (§ 3.3.3 Privileged) forever.
+pub fn freeze_hart() -> ! {
+    // safety: this is in s mode so it is ok
+    unsafe {
+        let mut sreg = get_sstatus();
+        sreg.set_s_ints(false);
+        set_sstatus(sreg);
+    }
+    loop {
+        unsafe { asm!("wfi") }
     }
 }
 
@@ -335,6 +363,11 @@ impl StatusReg {
     pub fn set_m_ints(&mut self, new: bool) {
         self.0.view_bits_mut::<Lsb0>().set(MSTATUS_MIE, new);
     }
+
+    /// set whether supervisor mode will receive interrupts
+    pub fn set_s_ints(&mut self, new: bool) {
+        self.0.view_bits_mut::<Lsb0>().set(SSTATUS_SIE, new);
+    }
 }
 
 /// An implementation of ArchDetails
@@ -376,7 +409,7 @@ impl PhysAccess for PhysMem {
         // as to whether this is intentional or not.
         let next = mine.next?;
         assert!(
-            next.addr().is_page_aligned(),
+            next.addr().is_page_aligned(PageSize::Page4k),
             "Loaded corrupt (?) metadata from free list: addr to next page not page aligned"
         );
         *guard = Some(next);
@@ -385,7 +418,7 @@ impl PhysAccess for PhysMem {
 
     unsafe fn free(addr: PhysAddr<Self>) {
         assert!(
-            addr.is_page_aligned(),
+            addr.is_page_aligned(PageSize::Page4k),
             "Freed page address must be page aligned"
         );
         let mut guard = PHYS_FREELIST.lock();
@@ -393,8 +426,8 @@ impl PhysAccess for PhysMem {
         let record = PhysPageMetadata { next: tail };
         // store the record pointing to the existing tail the start of the page
         // we're freeing
-        let ptr = Phys::new(addr);
-        *ptr.as_ptr() = record;
+        let ptr: Phys<PhysPageMetadata<PhysMem>> = Phys::new(addr);
+        ptr.as_ptr().write(record);
 
         // store the pointer to the block we just made on the free list pointer
         *guard = Some(ptr);
