@@ -1,4 +1,10 @@
 //! The microscopic version of the `flop` filesystem. This is used for initrd.
+//!
+//! The format goes as follows:
+//! - [`Header`] (currently just magic)
+//! - Arbitrary number of [`HeaderEntry`] entries followed by a [`HeaderEntry`]
+//!   with [`HeaderEntryType`] of [`HeaderEntryType::End`]
+//! - A blob of unstructured data
 #![cfg_attr(not(feature = "std"), no_std)]
 use core::convert::TryInto;
 use core::mem;

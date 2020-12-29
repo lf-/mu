@@ -26,3 +26,6 @@ qemu-gdb: cargo
 
 gdb:
 	$(GDB)
+
+doc:
+	cargo doc --workspace

@@ -1,0 +1,19 @@
+[workspace]
+members = [
+    "kern",
+    "crates/fidget_spinner",
+    "crates/hexdump",
+    "crates/microflop",
+    "crates/riscv_paging",
+    "crates/typesafe_ints",
+]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+debug = true
+
+[patch.crates-io]
+fdt-rs = { git = 'https://github.com/lf-/fdt-rs', branch = 'fix-doc' }
