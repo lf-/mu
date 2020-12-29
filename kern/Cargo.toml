@@ -15,6 +15,11 @@ debug = true
 
 [dependencies]
 log = "0.4.11"
+microflop = { path = "../crates/microflop" }
+
+[dependencies.fdt-rs]
+version = "0.4.2"
+default-features = false
 
 [dependencies.bitvec]
 version = "0.19.4"

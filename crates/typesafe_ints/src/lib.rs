@@ -137,17 +137,18 @@ assert_eq!(v_d, Err(()));
 */
 #[macro_export]
 macro_rules! int_enum_only {
-    ($(#[$meta:meta])* $vis:vis enum $ident:ident($ty:ty) {
+    ($(#[$meta:meta])* $vis:vis enum $ident:ident($ty:ident) {
         $($(#[$varmeta:meta])* $variant:ident = $num:expr),* $(,)*
     }) => {
         $(#[$meta])*
+        #[repr($ty)]
         $vis enum $ident {
             $($(#[$varmeta:meta])* $variant = $num),*
         }
 
         impl ::core::convert::TryFrom<$ty> for $ident {
             type Error = ();
-            fn try_from(t: $ty) -> Result<$ident, Self::Error> {
+            fn try_from(t: $ty) -> ::core::result::Result<$ident, Self::Error> {
                 match t {
                     $(
                         $num => Ok($ident::$variant)

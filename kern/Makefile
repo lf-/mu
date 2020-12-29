@@ -5,7 +5,7 @@ GDB = /opt/gdb/bin/gdb
 CPUS = 1
 KERNEL = target/riscv64imac-unknown-none-elf/release/kern
 
-QEMUOPTS = -machine virt -bios none -kernel $(KERNEL) -m 128M -smp $(CPUS) -nographic
+QEMUOPTS = -machine virt -bios none -kernel $(KERNEL) -initrd initrd -m 128M -smp $(CPUS) -nographic
 # debug on port 1234
 #QEMUOPTS += -s
 #QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0

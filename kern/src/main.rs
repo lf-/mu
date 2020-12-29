@@ -13,6 +13,7 @@ mod isr;
 mod task;
 
 use core::fmt::Write;
+use core::slice;
 use core::{ffi::c_void, panic::PanicInfo, sync::atomic::Ordering};
 
 use crate::arch::*;
@@ -23,6 +24,8 @@ use riscv_paging::{
 };
 
 use bitvec::prelude::*;
+use fdt_rs::{base::DevTree, error::DevTreeError};
+use fdt_rs::{base::DevTreeNode, prelude::*};
 use log::info;
 
 const BANNER: &'static str = include_str!("logo.txt");
@@ -96,10 +99,9 @@ extern "C" {
 }
 
 #[no_mangle]
-unsafe extern "C" fn startup() {
+unsafe extern "C" fn startup(core_id: usize, dtb: *const u8) {
     // this function will be hit by as many harts as we have, at once
     // thus, we will spinloop the ones we don't have work for yet
-    let core_id = m_core_id();
     if core_id != 0 {
         loop {}
     }
@@ -115,7 +117,7 @@ unsafe extern "C" fn startup() {
     set_satp(Satp(0));
 
     // set the exception return address
-    set_mepc(kern_main);
+    set_mepc(kern_main as *const _);
 
     // set the delegated exceptions and interrupts to be all of the base arch ones
     // ... except env calls from S-mode
@@ -140,16 +142,78 @@ unsafe extern "C" fn startup() {
     set_core_id(core_id);
     NUM_CPUS.fetch_add(1, Ordering::SeqCst);
 
-    asm!("mret");
+    asm!("mret", in("a0") core_id, in("a1") dtb);
     core::hint::unreachable_unchecked();
 }
 
-unsafe extern "C" fn kern_main() -> ! {
-    let core_id = core_id();
+/// Data we get from reading the device tree
+struct DtbRead {
+    initrd: &'static [u8],
+}
 
+fn dump_dt(lvl: u8, dt: &DevTree) -> Result<(), DevTreeError> {
+    let mut iter = dt.items();
+    loop {
+        let itm = iter.next()?;
+        if itm.is_none() {
+            break;
+        }
+
+        let itm = itm.unwrap();
+        match itm {
+            fdt_rs::base::DevTreeItem::Node(n) => {
+                println!("node {:?}", n.name());
+                let mut pi = n.props();
+                loop {
+                    let prop = pi.next()?;
+                    if prop.is_none() {
+                        break;
+                    }
+                    let prop = prop.unwrap();
+                    println!("- {:?} {:?}", prop.name(), prop.str());
+                }
+            }
+            fdt_rs::base::DevTreeItem::Prop(p) => {
+                println!("-- {:?} {:?}", p.name(), p.str());
+            }
+        }
+    }
+    // let mut items = node.props();
+    // for _ in 0..lvl {
+    //     print!("  ");
+    // }
+
+    // println!("node {:?}", node.name()?);
+    // loop {
+    //     let itm = items.next()?;
+    //     if itm.is_none() {
+    //         break;
+    //     }
+    //     let itm = itm.unwrap();
+    //     for _ in 0..lvl + 1 {
+    //         print!("  ");
+    //     }
+    //     println!("{}: {:?}", itm.name()?, itm.str());
+    // }
+    Ok(())
+}
+
+unsafe fn read_dtb(dtb: *const u8) -> Result<DtbRead, DevTreeError> {
+    info!("the fuck, {:?}", dtb);
+    // safety: we'd be hosed if it was not this size so,,
+    let len = DevTree::read_totalsize(slice::from_raw_parts(dtb, DevTree::MIN_HEADER_SIZE))?;
+    let buf = slice::from_raw_parts(dtb, len);
+    info!("len is {:x}", len);
+    let dtb = DevTree::new(buf)?;
+    dump_dt(0, &dtb)?;
+    todo!()
+}
+
+unsafe extern "C" fn kern_main(core_id: usize, dtb: *const u8) -> ! {
     let endaddr = &SEC_END as *const _ as usize;
     if core_id == 0 {
         crate::print::init();
+        read_dtb(dtb).expect("dtb");
         for page in (endaddr..addr::PHYSMEM + addr::PHYSMEM_LEN).step_by(4096) {
             //println!("wtf {:x}", page);
             PhysMem::free(PhysAddr::new(page))

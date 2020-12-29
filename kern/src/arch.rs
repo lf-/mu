@@ -137,7 +137,7 @@ csrw!(
     "Sets the machine exception return address",
     set_mepc,
     mepc,
-    unsafe extern "C" fn() -> !
+    *const ()
 );
 
 csrw!(

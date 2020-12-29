@@ -1,0 +1,21 @@
+[package]
+name = "microflop"
+version = "0.1.0"
+authors = ["lf- <lf-@users.noreply.github.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = []
+
+cli = ["clap", "color-eyre", "std"]
+std = []
+
+[dependencies]
+clap = {version = "3.0.0-beta.2", optional = true}
+typesafe_ints = { path = "../typesafe_ints" }
+fallible-iterator = {version = "0.2.0", default_features = false}
+color-eyre = { version = "0.5.10", optional = true }
+static_assertions = "1.1.0"
+hexdump = { path = "../hexdump" }
