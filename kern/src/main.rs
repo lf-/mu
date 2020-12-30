@@ -27,6 +27,7 @@ use bitvec::prelude::*;
 use fdt_rs::{base::DevTree, error::DevTreeError};
 use fdt_rs::{base::DevTreeNode, prelude::*};
 use log::info;
+use spanner::Span;
 
 const BANNER: &'static str = include_str!("logo.txt");
 
@@ -199,31 +200,63 @@ fn dump_dt(lvl: u8, dt: &DevTree) -> Result<(), DevTreeError> {
 }
 
 unsafe fn read_dtb(dtb: *const u8) -> Result<DtbRead, DevTreeError> {
-    info!("the fuck, {:?}", dtb);
+    info!("loading device tree");
     // safety: we'd be hosed if it was not this size so,,
     let len = DevTree::read_totalsize(slice::from_raw_parts(dtb, DevTree::MIN_HEADER_SIZE))?;
     let buf = slice::from_raw_parts(dtb, len);
-    info!("len is {:x}", len);
+
     let dtb = DevTree::new(buf)?;
-    dump_dt(0, &dtb)?;
-    todo!()
+    let chosen = dtb
+        .nodes()
+        .find(|n| Ok(n.name()? == "chosen"))?
+        .expect("failed to get initrd");
+
+    let mut props = chosen.props();
+    let mut initrd_start = None;
+    let mut initrd_end = None;
+    while let Some(p) = props.next()? {
+        match p.name() {
+            Ok("linux,initrd-start") => initrd_start = Some(p.u32(0)?),
+            Ok("linux,initrd-end") => initrd_end = Some(p.u32(0)?),
+            _ => (),
+        }
+    }
+    let initrd_start = initrd_start.expect("missing initrd start");
+    let initrd_end = initrd_end.expect("missing initrd end");
+
+    let initrd = slice::from_raw_parts(
+        initrd_start as usize as *const u8,
+        (initrd_end - initrd_start) as usize,
+    );
+
+    // dump_dt(0, &dtb)?;
+    Ok(DtbRead { initrd })
 }
 
 unsafe extern "C" fn kern_main(core_id: usize, dtb: *const u8) -> ! {
     let endaddr = &SEC_END as *const _ as usize;
-    if core_id == 0 {
-        crate::print::init();
-        read_dtb(dtb).expect("dtb");
-        for page in (endaddr..addr::PHYSMEM + addr::PHYSMEM_LEN).step_by(4096) {
-            //println!("wtf {:x}", page);
-            PhysMem::free(PhysAddr::new(page))
-        }
-        println!("{}", BANNER);
-    } else {
-        // you know what, I don't want to deal with other cores
+    if core_id != 0 {
         loop {}
     }
-    info!("booting core {}", core_id);
+
+    crate::print::init();
+    let DtbRead { initrd } = read_dtb(dtb).expect("dtb");
+    info!("init physical memory allocator");
+    for page in (endaddr..addr::PHYSMEM + addr::PHYSMEM_LEN).step_by(4096) {
+        //println!("wtf {:x}", page);
+
+        // If the page intersects initrd, we don't want to clobber it
+        // We don't really care so much about clobbering dtb.
+        let page_span = Span::new(page, page + 4096);
+        let initrd_span = initrd.into();
+        if page_span.intersect(initrd_span).is_some() {
+            continue;
+        }
+        PhysMem::free(PhysAddr::new(page))
+    }
+
+    // println!("{}", BANNER);
+
     // we will hit this with one core!
     // println!("hello world from risc-v!!");
     get_sstatus();

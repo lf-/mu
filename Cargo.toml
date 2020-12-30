@@ -6,6 +6,7 @@ members = [
     "crates/microflop",
     "crates/riscv_paging",
     "crates/typesafe_ints",
+    "crates/spanner",
     "tools/uflop",
 ]
 # We don't build ANYTHING by default, because everything is target specific
@@ -17,6 +18,8 @@ panic = "abort"
 [profile.release]
 panic = "abort"
 debug = true
+# if operations are expected to not overflow, they will be annotated as such
+overflow-checks = true
 
 [patch.crates-io]
 fdt-rs = { git = 'https://github.com/lf-/fdt-rs', branch = 'fix-doc' }

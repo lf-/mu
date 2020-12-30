@@ -10,6 +10,7 @@ edition = "2018"
 [dependencies]
 log = "0.4.11"
 microflop = { path = "../crates/microflop" }
+spanner = { path = "../crates/spanner" }
 
 [dependencies.fdt-rs]
 version = "0.4.2"

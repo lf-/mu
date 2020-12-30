@@ -4,7 +4,7 @@ GDB = /opt/gdb/bin/gdb
 # TODO: UP for the minute
 CPUS = 1
 KERNEL = ../target/riscv64imac-mu-kern-elf/release/kern
-CARGOFLAGS = -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem --release --target ../riscv64imac-mu-kern-elf.json
+CARGOFLAGS = --release
 # RUST_TARGET_PATH = $(shell realpath ..)
 # export RUST_TARGET_PATH
 

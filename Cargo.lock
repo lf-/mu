@@ -268,6 +268,7 @@ dependencies = [
  "log",
  "microflop",
  "riscv_paging",
+ "spanner",
  "typesafe_ints",
 ]
 
@@ -525,6 +526,10 @@ dependencies = [
  "lazy_static",
  "loom",
 ]
+
+[[package]]
+name = "spanner"
+version = "0.1.0"
 
 [[package]]
 name = "static_assertions"
