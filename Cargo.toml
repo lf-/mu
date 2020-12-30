@@ -6,7 +6,10 @@ members = [
     "crates/microflop",
     "crates/riscv_paging",
     "crates/typesafe_ints",
+    "tools/uflop",
 ]
+# We don't build ANYTHING by default, because everything is target specific
+default-members = []
 
 [profile.dev]
 panic = "abort"

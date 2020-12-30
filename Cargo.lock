@@ -640,6 +640,17 @@ name = "typesafe_ints"
 version = "0.1.0"
 
 [[package]]
+name = "uflop"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "fallible-iterator",
+ "hexdump",
+ "microflop",
+]
+
+[[package]]
 name = "unicode-segmentation"
 version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

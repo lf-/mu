@@ -1,0 +1,13 @@
+{
+    "rust-analyzer.cargo.target": "riscv64imac-unknown-mukern-elf",
+    "rust-analyzer.checkOnSave.allTargets": false,
+    // "rust-analyzer.checkOnSave.overrideCommand": [
+    //     "cargo",
+    //     "check",
+    //     "--message-format=json",
+    //     "--manifest-path",
+    //     "kern/Cargo.toml",
+    //     "--target",
+    //     "riscv64imac-unknown-none-elf"
+    // ]
+}
