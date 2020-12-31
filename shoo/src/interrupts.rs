@@ -5,8 +5,8 @@ use core::ptr;
 
 use bitvec::prelude::*;
 
-use crate::addr;
-use crate::arch;
+use riscv::addr;
+use riscv::arch;
 
 const TIMER_ISR_EMPTY: TimerIsrData = TimerIsrData {
     regs: [0; 2],

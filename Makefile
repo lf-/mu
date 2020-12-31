@@ -3,7 +3,7 @@ QEMU = /opt/qemu/bin/qemu-system-riscv64
 GDB = /opt/gdb/bin/gdb
 # TODO: UP for the minute
 CPUS = 1
-KERNEL = ../target/riscv64imac-mu-kern-elf/release/kern
+KERNEL = target/riscv64imac-mu-shoo-elf/release/shoo
 CARGOFLAGS = --release
 # RUST_TARGET_PATH = $(shell realpath ..)
 # export RUST_TARGET_PATH
@@ -16,7 +16,13 @@ QEMUOPTS = -machine virt -bios none -kernel $(KERNEL) -initrd initrd -m 128M -sm
 
 .PHONY: qemu cargo
 cargo:
-	cargo build $(CARGOFLAGS)
+	(cd shoo; cargo build $(CARGOFLAGS))
+
+a:
+	touch a
+
+initrd: a
+	cargo run -p uflop -- new -o initrd $^
 
 # always open a gdb socket but only block if we request a debugger. reasoning:
 # the qemu monitor is rather broken and e.g. doesn't allow reading regs

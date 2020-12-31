@@ -11,7 +11,6 @@ use riscv_paging::{PhysAddr, PAGE_MASK};
 use bitvec::prelude::*;
 
 use crate::addr::PHYSMEM_MAP;
-use crate::task::Task;
 
 type Mutex<T> = fidget_spinner::Mutex<T, Arch>;
 type Phys<T> = riscv_paging::Phys<T, PhysMem>;
@@ -195,8 +194,7 @@ csrr!(
 csrw!(
     "Sets the running task (saves the given task pointer to sscratch)",
     set_running_task,
-    sscratch,
-    &mut Task
+    sscratch
 );
 
 csrw!("Sets the supervisor trap vector", set_stvec, stvec, u64);

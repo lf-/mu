@@ -16,14 +16,6 @@ impl HasEmpty for [u8; 8192] {
     const EMPTY: UnsafeCell<Self> = UnsafeCell::new([0u8; 8192]);
 }
 
-// TODO: how do I get these into assembly in my fault handler? I could put a pointer
-// into the Task structure I suppose?? idk what the fuck im doing
-pub static EXCEPTION_STACKS: PerHartMut<[u8; 8192]> = PerHartMut::new();
-
-pub static PANICKED: AtomicBool = AtomicBool::new(false);
-pub static PANIC_CHECKIN: AtomicUsize = AtomicUsize::new(0);
-pub static NUM_CPUS: AtomicUsize = AtomicUsize::new(0);
-
 /// Thing that has an empty state
 pub trait HasEmpty {
     const EMPTY: UnsafeCell<Self>;

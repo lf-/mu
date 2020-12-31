@@ -6,28 +6,4 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-
 [dependencies]
-log = "0.4.11"
-microflop = { path = "../crates/microflop" }
-spanner = { path = "../crates/spanner" }
-
-[dependencies.fdt-rs]
-version = "0.4.2"
-default-features = false
-
-[dependencies.bitvec]
-version = "0.19.4"
-default-features = false
-
-[dependencies.riscv_paging]
-path = "../crates/riscv_paging"
-
-[dependencies.typesafe_ints]
-path = "../crates/typesafe_ints"
-
-[dependencies.fidget_spinner]
-path = "../crates/fidget_spinner"
-
-[build-dependencies]
-cc = "1.0.65"

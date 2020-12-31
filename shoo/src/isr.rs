@@ -1,7 +1,7 @@
 //! entry points into the kernel
 
-use crate::arch::*;
 use crate::task::Task;
+use riscv::arch::*;
 
 use core::convert::TryFrom;
 

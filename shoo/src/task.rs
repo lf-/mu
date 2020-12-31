@@ -4,7 +4,7 @@ use core::fmt::Display;
 use core::iter;
 use core::{cell::UnsafeCell, ffi::c_void};
 
-use crate::{
+use riscv::{
     addr,
     arch::Satp,
     globals::{HasEmpty, PerHartMut},

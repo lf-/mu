@@ -1,0 +1,31 @@
+[package]
+name = "shoo"
+version = "0.1.0"
+authors = ["lf- <lf-@users.noreply.github.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+
+[dependencies]
+log = "0.4.11"
+microflop = { path = "../crates/microflop" }
+spanner = { path = "../crates/spanner" }
+riscv = { path = "../crates/riscv" }
+
+[dependencies.fdt-rs]
+version = "0.4.2"
+default-features = false
+
+[dependencies.bitvec]
+version = "0.20.1"
+default-features = false
+
+[dependencies.riscv_paging]
+path = "../crates/riscv_paging"
+
+[dependencies.fidget_spinner]
+path = "../crates/fidget_spinner"
+
+[build-dependencies]
+cc = "1.0.65"

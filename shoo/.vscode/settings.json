@@ -1,14 +1,14 @@
 {
-    "rust-analyzer.cargo.target": "../riscv64imac-mu-kern-elf.json",
+    "rust-analyzer.cargo.target": "../riscv64imac-mu-shoo-elf.json",
     "rust-analyzer.checkOnSave.allTargets": false,
     "rust-analyzer.checkOnSave.overrideCommand": [
         "cargo",
         "check",
         "--message-format=json",
         "--manifest-path",
-        "kern/Cargo.toml",
+        "shoo/Cargo.toml",
         "--target",
-        "./riscv64imac-mu-kern-elf.json",
+        "./riscv64imac-mu-shoo-elf.json",
         "-Zbuild-std=core,compiler_builtins",
         "-Zbuild-std-features=compiler-builtins-mem"
     ],
