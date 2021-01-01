@@ -4,8 +4,8 @@
 //! Good documentation for it is available at
 //! <https://archive.org/details/bitsavers_nationaldamunicationsElementsDataBook_19316911/page/n155/mode/2up>
 
-use core::ptr;
-use core::slice;
+use core::{ptr, sync::atomic::AtomicUsize};
+use core::{slice, sync::atomic::Ordering};
 
 use bitvec::prelude::*;
 use log::{Level, LevelFilter};
@@ -123,14 +123,22 @@ impl Serial {
 
 struct Logger;
 
+pub static LOG_LEVEL: AtomicUsize = AtomicUsize::new(Level::Info as usize);
+
 impl log::Log for Logger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() >= Level::Info
+        let level = LOG_LEVEL.load(Ordering::SeqCst);
+        metadata.level() as usize <= level
     }
 
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
-            crate::println!("{} :: {}", record.level(), record.args());
+            crate::println!(
+                "[{}] {} :: {}",
+                record.module_path().unwrap_or("?"),
+                record.level(),
+                record.args()
+            );
         }
     }
 
@@ -148,7 +156,7 @@ pub fn init() {
     serial.init(Baudrate::B38400);
     *guard = Some(serial);
     log::set_logger(&LOGGER)
-        .map(|_| log::set_max_level(LevelFilter::Info))
+        .map(|_| log::set_max_level(LevelFilter::Debug))
         .unwrap();
 }
 

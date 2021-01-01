@@ -1,0 +1,34 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../docs"
+		},
+		{
+			"path": "../crates/riscv"
+		},
+		{
+			"path": "../crates/riscv_paging"
+		}
+	],
+	"settings": {
+		"rust-analyzer.cargo.target": "../riscv64imac-mu-kern-elf.json",
+		"rust-analyzer.checkOnSave.allTargets": false,
+		"rust-analyzer.checkOnSave.overrideCommand": [
+			"cargo",
+			"check",
+			"--message-format=json",
+			"-p",
+			"kern",
+			"--target",
+			"./riscv64imac-mu-kern-elf.json",
+			"-Zbuild-std=core,compiler_builtins",
+			"-Zbuild-std-features=compiler-builtins-mem"
+		],
+		"rust-analyzer.linkedProjects": [
+			"Cargo.toml"
+		]
+	}
+}

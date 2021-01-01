@@ -16,34 +16,29 @@ SECTIONS {
         *(.text.first)
         *(.text .text.*)
         . = ALIGN(0x1000);
-        _trampoline = .;
-        *(trampolines)
-        /* get off the trampoline page */
-        . = ALIGN(0x1000);
-        ASSERT(. - _trampoline == 0x1000, "trampoline must only be one page");
         /* TODO: figure out what this does */
         /* it's probably creating a symbol with the value of . ? */
         PROVIDE(etext = .);
     }
 
-    .rodata : {
+    .rodata ALIGN(0x1000) : {
         . = ALIGN(16);
         PROVIDE(srodata = .);
         *(.srodata .srodata.*) /* apparently these are the same as rodata for rv64 ? */
         . = ALIGN(16);
         *(.rodata .rodata.*)
+        . = ALIGN(0x1000);
         PROVIDE(erodata = .);
     }
 
-    .data : {
-        . = ALIGN(4096);
+    .data ALIGN(0x1000) : {
         PROVIDE(srwdata = .);
         *(.sdata .sdata.*)
         . = ALIGN(16);
         *(.data .data.*)
     }
 
-    .bss : {
+    .bss ALIGN(0x1000) : {
         . = ALIGN(16);
         *(.sbss .sbss.*)
         . = ALIGN(16);

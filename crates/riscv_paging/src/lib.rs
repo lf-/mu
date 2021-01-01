@@ -22,8 +22,12 @@ pub const PAGE_MASK: usize = PAGE_SIZE as usize - 1;
 pub struct PhysAddr<P: PhysAccess>(usize, PhantomData<P>);
 
 /// A newtype wrapper around a virtual address.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VirtAddr(pub usize);
+
+/// A newtype wrapper around a virtual space size
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VirtSize(pub usize);
 
 /// Operations that can be performed on a memory address
 pub trait Addr: Copy {
@@ -72,6 +76,12 @@ impl<P: PhysAccess> PhysAddr<P> {
     pub fn new(addr: usize) -> PhysAddr<P> {
         PhysAddr(addr, PhantomData)
     }
+
+    /// Gets the PhysAddr as a pointer to u8 in whatever virtual space is
+    /// currently active.
+    pub unsafe fn as_u8_ptr(self) -> *mut u8 {
+        P::address(self)
+    }
 }
 
 // apparently I have to impl these myself because it tries to generate bounds
@@ -85,7 +95,17 @@ impl<P: PhysAccess, T> core::fmt::Debug for Phys<T, P> {
 
 impl<P: PhysAccess> core::fmt::Debug for PhysAddr<P> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "PhysAddr({:016x})", self.0)
+        f.debug_tuple("PhysAddr")
+            .field(&format_args!("0x{:016x}", self.0))
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for VirtAddr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("VirtAddr")
+            .field(&format_args!("0x{:016x}", self.0))
+            .finish()
     }
 }
 
@@ -125,7 +145,7 @@ impl VirtAddr {
         VirtAddr(self.0.view_bits::<Lsb0>()[0..=38].load())
     }
 
-    /// Decomposes the address into an array VPN[0], VPN[1], VPN[2]
+    /// Decomposes the address into an array `VPN[0]`, `VPN[1]`, `VPN[2]`
     fn parts(self) -> [u16; 3] {
         let h = self.0.view_bits::<Lsb0>();
         [h[12..=20].load(), h[21..=29].load(), h[30..=38].load()]
@@ -139,6 +159,16 @@ impl Addr for VirtAddr {
 
     fn new(addr: usize) -> Self {
         VirtAddr(addr)
+    }
+}
+
+impl Addr for VirtSize {
+    fn get(self) -> usize {
+        self.0
+    }
+
+    fn new(addr: usize) -> Self {
+        VirtSize(addr)
     }
 }
 
@@ -348,34 +378,6 @@ pub struct PageWalkResult {
     pub last_level: Option<Pte>,
 }
 
-pub unsafe fn resolve<P: PhysAccess>(
-    root_pt: PageTable<P>,
-    va: VirtAddr,
-) -> Result<PageWalkResult, MapError> {
-    let parts = va.parts();
-    let mut res: PageWalkResult = Default::default();
-    let mut pt = root_pt;
-    for level in (0..=2).rev() {
-        let part = parts[level];
-        let p = pt.base.as_ptr().offset(part as isize);
-        let pte = pt.entry(part);
-        let (pnum, attrs) = pte.decompose();
-        res.parts[level] = Some(pte);
-
-        if !attrs.contains(PteAttrs::V) {
-            // invalid entry
-            break;
-        }
-        if attrs.intersects(PteAttrs::R | PteAttrs::X) {
-            // last level entry
-            res.last_level = Some(pte);
-            return Ok(res);
-        }
-        pt = PageTable::from_raw(Phys::new_raw((pnum * PAGE_SIZE) as usize));
-    }
-    Ok(res)
-}
-
 /// Invalidates the page table cache for all the asids for the given address
 // TODO: do this smarter
 unsafe fn invalidate_cache(vaddr: VirtAddr) {
@@ -383,85 +385,186 @@ unsafe fn invalidate_cache(vaddr: VirtAddr) {
         vaddr = in (reg) vaddr.0);
 }
 
-/// Maps a page at virtual address `va` to physical address `pa`. `pa` and `va`
-/// must be at least page (4k) aligned.
-///
-/// Assumes the root_pt is already present and initialized, that we have exclusive
-/// access, and that interrupts are disabled.
-///
-/// Fails if it is trying to map something already mapped.
-pub unsafe fn virt_map_one<P: PhysAccess>(
-    root_pt: PageTable<P>,
-    pa: PhysAddr<P>,
-    va: VirtAddr,
-    size: PageSize,
-    attrs: PteAttrs,
-) -> Result<(), MapError> {
-    // there is no reason you would want to map something invalid
-    let attrs = attrs | PteAttrs::V;
+impl<P: PhysAccess> PageTable<P> {
+    /// Resolves a virtual address using a page table, returning all the relevant PTEs.
+    pub unsafe fn resolve(self, va: VirtAddr) -> Result<PageWalkResult, MapError> {
+        log::debug!("resolve {:?}", va);
+        let parts = va.parts();
+        let mut res: PageWalkResult = Default::default();
+        let mut pt = self;
+        for level in (0..=2).rev() {
+            let part = parts[level];
+            log::debug!(
+                "level {:?} part {:?} table at {:?}",
+                level,
+                part,
+                pt.get_base()
+            );
+            let pte = pt.entry(part);
+            let (pnum, attrs) = pte.decompose();
+            res.parts[level] = Some(pte);
 
-    assert!(
-        pa.is_page_aligned(size),
-        "mapped phys address must be page aligned"
-    );
-    assert!(
-        va.is_page_aligned(size),
-        "mapped virt address must be page aligned"
-    );
-    let pa = PhysAddr::<P>::new(pa.get());
-    let va = va.canonicalize().round_up(PageSize::Page4k)?;
-    let va_parts = va.parts();
-
-    let mut table = root_pt;
-    let mut pte_addr;
-    let mut level = 2;
-    for i in (size as usize..=2).rev() {
-        pte_addr = table.base.as_ptr().offset(va_parts[i] as isize);
-        let pte = pte_addr.read();
-        level = i;
-
-        let (next_ppn, attrs) = pte.decompose();
-        if !attrs.contains(PteAttrs::V) {
-            // if we hit an invalid entry, we're done as that's where we need
-            // to start inserting entries.
-            break;
+            if !attrs.contains(PteAttrs::V) {
+                // invalid entry
+                break;
+            }
+            if attrs.intersects(PteAttrs::R | PteAttrs::X) {
+                // last level entry
+                res.last_level = Some(pte);
+                return Ok(res);
+            }
+            pt = PageTable::from_raw(Phys::new_raw((pnum * PAGE_SIZE) as usize));
         }
+        Ok(res)
+    }
 
-        if attrs.intersects(PteAttrs::R | PteAttrs::X) {
-            // it's a leaf page, it's already mapped! oops! leave!
-            return Err(MapError::AlreadyMapped);
-        }
+    /// Maps a page at virtual address `va` to physical address `pa`. `pa` and `va`
+    /// must be at least page (4k) aligned.
+    ///
+    /// Assumes the root_pt is already present and initialized, that we have exclusive
+    /// access, and that interrupts are disabled.
+    ///
+    /// Fails if it is trying to map something already mapped.
+    pub unsafe fn virt_map_one(
+        self,
+        pa: PhysAddr<P>,
+        va: VirtAddr,
+        size: PageSize,
+        attrs: PteAttrs,
+    ) -> Result<(), MapError> {
+        // there is no reason you would want to map something invalid
+        let attrs = attrs | PteAttrs::V;
+        log::debug!(
+            "virt_map_one pa={:?}, va={:?}, size={:?}, attrs={:?}",
+            pa,
+            va,
+            size,
+            attrs
+        );
 
         assert!(
-            i != 0,
-            "we should never find non-leaf Ptes at the last level table"
+            pa.is_page_aligned(size),
+            "mapped phys address must be page aligned"
         );
-        table = PageTable {
-            base: Phys::new_raw((next_ppn * PAGE_SIZE) as usize),
-        };
+        assert!(
+            va.is_page_aligned(size),
+            "mapped virt address must be page aligned"
+        );
+        let pa = PhysAddr::<P>::new(pa.get());
+        let va = va.canonicalize().round_up(PageSize::Page4k)?;
+        let va_parts = va.parts();
+
+        let mut table = self;
+        let mut pte_addr;
+        let mut level = 2;
+        for i in (size as usize..=2).rev() {
+            log::debug!(
+                "look level {} index {:3} at {:?}",
+                i,
+                va_parts[i],
+                table.base
+            );
+            pte_addr = table.base.as_ptr().offset(va_parts[i] as isize);
+            let pte = pte_addr.read();
+            level = i;
+
+            let (next_ppn, attrs) = pte.decompose();
+            if !attrs.contains(PteAttrs::V) {
+                // if we hit an invalid entry, we're done as that's where we need
+                // to start inserting entries.
+                break;
+            }
+
+            if attrs.intersects(PteAttrs::R | PteAttrs::X) {
+                // it's a leaf page, it's already mapped! oops! leave!
+                return Err(MapError::AlreadyMapped);
+            }
+
+            assert!(
+                i != 0,
+                "we should never find non-leaf Ptes at the last level table"
+            );
+            table = PageTable {
+                base: Phys::new_raw((next_ppn * PAGE_SIZE) as usize),
+            };
+        }
+
+        // we need to allocate some page tables now if we are not at level 0 already
+        for i in (size as usize + 1..=level).rev() {
+            let entry = table.base.as_ptr().offset(va_parts[i] as isize);
+            let next_pt = PageTable::<P>::alloc()?;
+            let pte = Pte::new(next_pt.base.addr(), PteAttrs::V);
+            log::debug!(
+                "write level {} index {:3} at {:?} pte {:?}",
+                i,
+                va_parts[i],
+                table.base,
+                pte
+            );
+            entry.write(pte);
+            table = next_pt;
+        }
+
+        // we have now reached level `size` and table points to the last level table
+        let entry = table.base.as_ptr().offset(va_parts[size as usize] as isize);
+        let pte = Pte::new(pa, attrs);
+        log::debug!(
+            "leaf pte level {} pos {} is {:?}",
+            size as usize,
+            va_parts[size as usize],
+            pte
+        );
+        entry.write(pte);
+        // TODO: We probably have to have some kind of TLB shootdown thing.
+        // or cooperative thing. The reason for this is that the task might get
+        // migrated to another core where the bad address is still cached in a TLB
+        // The way I want to do this is by having a bitmap of ASIDs to be cleared
+        // on next entry, I think.
+        //
+        // For the minute, we will clear the TLB for the task's ASID on task entry.
+        // It's easy but not very good.
+        invalidate_cache(va);
+        Ok(())
     }
 
-    // we need to allocate some page tables now if we are not at level 0 already
-    for i in (size as usize + 1..=level).rev() {
-        let entry = table.base.as_ptr().offset(va_parts[i] as isize);
-        let next_pt = PageTable::<P>::alloc()?;
-        entry.write(Pte::new(next_pt.base.addr(), PteAttrs::V));
-        table = next_pt;
+    /// Maps `len` worth of pages at `pa` to pages starting at the virtual address
+    /// `va`. The attributes `attrs` along with [PteAttr::V] are given to the created
+    /// page table entries.
+    ///
+    /// This assumes the given `root_pt` is allocated and valid, and that this thread
+    /// has exclusive access to it. (As designed, we do not share page tables cross
+    /// threads so it should not be an issue)
+    ///
+    /// If a failure occurs, the state will not be restored, i.e. the pages may be
+    /// partially mapped.
+    pub unsafe fn virt_map(
+        self,
+        pa: PhysAddr<P>,
+        va: VirtAddr,
+        len: usize,
+        attrs: PteAttrs,
+    ) -> Result<(), MapError> {
+        assert!(len > 0, "len must be >0");
+        // round len up to the nearest page
+        let len = len;
+
+        for offs in (0..len).step_by(PAGE_SIZE as _) {
+            self.virt_map_one(
+                PhysAddr::new(pa.get().checked_add(offs)?),
+                VirtAddr(va.0.checked_add(offs)?),
+                PageSize::Page4k,
+                attrs,
+            )?;
+        }
+
+        Ok(())
     }
 
-    // we have now reached level `size` and table points to the last level table
-    let entry = table.base.as_ptr().offset(va_parts[size as usize] as isize);
-    entry.write(Pte::new(pa, attrs));
-    // TODO: We probably have to have some kind of TLB shootdown thing.
-    // or cooperative thing. The reason for this is that the task might get
-    // migrated to another core where the bad address is still cached in a TLB
-    // The way I want to do this is by having a bitmap of ASIDs to be cleared
-    // on next entry, I think.
-    //
-    // For the minute, we will clear the TLB for the task's ASID on task entry.
-    // It's easy but not very good.
-    invalidate_cache(va);
-    Ok(())
+    /// Allocates a new page from the pool at `va`.
+    pub unsafe fn virt_alloc_one(self, va: VirtAddr, attrs: PteAttrs) -> Result<(), MapError> {
+        let page = P::alloc().ok_or(MapError::OOM)?;
+        self.virt_map_one(page, va, PageSize::Page4k, attrs)
+    }
 }
 
 #[derive(Debug)]
@@ -472,46 +575,14 @@ pub enum MapError {
     Unaligned,
     /// address already has been mapped on some level of the page table
     AlreadyMapped,
+    /// ran out of memory
+    OOM,
 }
 
 impl core::convert::From<NoneError> for MapError {
     fn from(_: NoneError) -> Self {
         MapError::NoneError
     }
-}
-
-/// Maps `len` worth of pages at `pa` to pages starting at the virtual address
-/// `va`. The attributes `attrs` along with [PteAttr::V] are given to the created
-/// page table entries.
-///
-/// This assumes the given `root_pt` is allocated and valid, and that this thread
-/// has exclusive access to it. (As designed, we do not share page tables cross
-/// threads so it should not be an issue)
-///
-/// If a failure occurs, the state will not be restored, i.e. the pages may be
-/// partially mapped.
-pub unsafe fn virt_map<P: PhysAccess>(
-    root_pt: PageTable<P>,
-    pa: PhysAddr<P>,
-    va: VirtAddr,
-    len: usize,
-    attrs: PteAttrs,
-) -> Result<(), MapError> {
-    assert!(len > 0, "len must be >0");
-    // round len up to the nearest page
-    let len = len;
-
-    for offs in (0..len).step_by(PAGE_SIZE as _) {
-        virt_map_one(
-            root_pt,
-            PhysAddr::new(pa.get().checked_add(offs)?),
-            VirtAddr(va.0.checked_add(offs)?),
-            PageSize::Page4k,
-            attrs,
-        )?;
-    }
-
-    Ok(())
 }
 
 /*

@@ -32,5 +32,5 @@ pub const PHYSMEM: usize = 0x8000_0000;
 // 128 MiB
 pub const PHYSMEM_LEN: usize = 128 * 1024 * 1024;
 
-pub const MAX_VIRT: usize = 0x80_0000_0000;
-pub const PHYSMEM_MAP: usize = 0x60_0000_0000;
+pub const MAX_VIRT: usize = 0xffff_ffff_ffff_ffff; // sx(0x80_0000_0000)
+pub const PHYSMEM_MAP: usize = 0xffff_ffe0_0000_0000; // sx(0x60_0000_0000)

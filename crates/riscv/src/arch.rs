@@ -5,15 +5,16 @@ use core::ops::RangeInclusive;
 use core::ptr;
 
 use fidget_spinner::ArchDetails;
+use riscv_paging::PAGE_MASK;
 use riscv_paging::{Addr, PageSize, PageTable, PhysAccess, PhysPageMetadata, PAGE_SIZE};
-use riscv_paging::{PhysAddr, PAGE_MASK};
 
 use bitvec::prelude::*;
 
 use crate::addr::PHYSMEM_MAP;
 
-type Mutex<T> = fidget_spinner::Mutex<T, Arch>;
-type Phys<T> = riscv_paging::Phys<T, PhysMem>;
+pub type Mutex<T> = fidget_spinner::Mutex<T, Arch>;
+pub type Phys<T> = riscv_paging::Phys<T, PhysMem>;
+pub type PhysAddr = riscv_paging::PhysAddr<PhysMem>;
 
 /// Disables interrupts being delivered to the current core
 pub unsafe fn disable_interrupts() {
@@ -392,11 +393,11 @@ fn pm_base() -> usize {
 }
 
 impl PhysAccess for PhysMem {
-    unsafe fn address<T>(ptr: PhysAddr<Self>) -> *mut T {
+    unsafe fn address<T>(ptr: riscv_paging::PhysAddr<Self>) -> *mut T {
         pm_base().wrapping_add(ptr.get()) as *mut T
     }
 
-    unsafe fn alloc() -> Option<PhysAddr<Self>> {
+    unsafe fn alloc() -> Option<riscv_paging::PhysAddr<Self>> {
         let mut guard = PHYS_FREELIST.lock();
         // grab the pointer to the next thing in the list
         let ret = (*guard)?;
@@ -414,7 +415,7 @@ impl PhysAccess for PhysMem {
         Some(ret.addr())
     }
 
-    unsafe fn free(addr: PhysAddr<Self>) {
+    unsafe fn free(addr: riscv_paging::PhysAddr<Self>) {
         assert!(
             addr.is_page_aligned(PageSize::Page4k),
             "Freed page address must be page aligned"

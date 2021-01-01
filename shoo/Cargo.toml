@@ -13,6 +13,11 @@ microflop = { path = "../crates/microflop" }
 spanner = { path = "../crates/spanner" }
 riscv = { path = "../crates/riscv" }
 
+[dependencies.goblin]
+version = "0.3.0"
+default_features = false
+features = ["elf64"]
+
 [dependencies.fdt-rs]
 version = "0.4.2"
 default-features = false

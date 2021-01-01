@@ -5,23 +5,25 @@
 
 mod interrupts;
 mod isr;
+mod loader;
 mod task;
 
-use core::fmt::Write;
+use core::mem::{self, MaybeUninit};
 use core::slice;
-use core::sync::atomic::*;
-use core::{ffi::c_void, panic::PanicInfo, sync::atomic::Ordering};
+use core::{ffi::c_void, sync::atomic::Ordering};
 
 #[macro_use]
 extern crate riscv;
+use addr::{PHYSMEM, PHYSMEM_MAP};
+use goblin::elf64::program_header::{ProgramHeader, PT_LOAD};
+use loader::flags_to_riscv;
+use microflop::FileName;
 use riscv::addr;
-use riscv::addr::{MAX_CPUS, PHYSMEM_LEN};
+use riscv::addr::PHYSMEM_LEN;
 use riscv::arch::*;
 use riscv::globals::*;
 use riscv::print;
-use riscv_paging::{
-    resolve, virt_map, virt_map_one, PageSize, PageTable, PhysAccess, PhysAddr, PteAttrs, VirtAddr,
-};
+use riscv_paging::{Addr, PageSize, PageTable, PhysAccess, PteAttrs, VirtAddr, VirtSize};
 
 use bitvec::prelude::*;
 use fdt_rs::{base::DevTree, error::DevTreeError};
@@ -34,62 +36,6 @@ const BANNER: &'static str = include_str!("logo.txt");
 // TODO: how do I get these into assembly in my fault handler? I could put a pointer
 // into the Task structure I suppose?? idk what the fuck im doing
 pub static EXCEPTION_STACKS: PerHartMut<[u8; 8192]> = PerHartMut::new();
-
-pub static PANICKED: AtomicBool = AtomicBool::new(false);
-pub static PANIC_CHECKIN: AtomicUsize = AtomicUsize::new(0);
-pub static NUM_CPUS: AtomicUsize = AtomicUsize::new(0);
-
-#[panic_handler]
-fn panic_handler(info: &PanicInfo) -> ! {
-    // We implement panicking across cores by having the panicking core
-    // send machine software interrupts to all the other cores, which
-    // will then, in the handler, detect that PANICKED is true, and halt
-    // themselves, incrementing PANIC_CHECKIN
-
-    PANICKED.store(true, Ordering::SeqCst);
-    PANIC_CHECKIN.fetch_add(1, Ordering::SeqCst);
-    let num_cpus = NUM_CPUS.load(Ordering::SeqCst);
-    let my_core_id = core_id();
-
-    for hartid in 0..MAX_CPUS {
-        // don't cross-processor interrupt ourselves
-        if hartid == my_core_id {
-            continue;
-        }
-        machinecall(MachineCall::InterruptHart, hartid);
-    }
-
-    while PANIC_CHECKIN.load(Ordering::SeqCst) != num_cpus {
-        core::hint::spin_loop();
-    }
-
-    struct PanicSerial(print::Serial);
-    impl core::fmt::Write for PanicSerial {
-        fn write_str(&mut self, s: &str) -> core::fmt::Result {
-            self.0.transmit(s.as_bytes());
-            Ok(())
-        }
-    }
-
-    // we know all the cores are halted, so we can violate aliasing on the
-    // serial driver
-    let serial = unsafe {
-        let mut serial = print::Serial::new(addr::UART0 as *mut _);
-        serial.init(print::Baudrate::B38400);
-        serial
-    };
-    let mut serial = PanicSerial(serial);
-
-    let _ = write!(serial, "!!! Panic !!! At the core {}\n", my_core_id);
-    if let Some(msg) = info.message() {
-        let _ = write!(serial, ":: {}\n", msg);
-    }
-    if let Some(loc) = info.location() {
-        let _ = write!(serial, "@ {}\n", loc);
-    }
-
-    freeze_hart()
-}
 
 extern "C" {
     static SUPERVISOR_VECTORS: c_void;
@@ -126,7 +72,7 @@ unsafe extern "C" fn startup(core_id: usize, dtb: *const u8) {
     set_satp(Satp(0));
 
     // set the exception return address
-    set_mepc(kern_main as *const _);
+    set_mepc(shoo_main as *const _);
 
     // set the delegated exceptions and interrupts to be all of the base arch ones
     // ... except env calls from S-mode
@@ -149,7 +95,7 @@ unsafe extern "C" fn startup(core_id: usize, dtb: *const u8) {
 
     // put our hart id into the thread pointer
     set_core_id(core_id);
-    NUM_CPUS.fetch_add(1, Ordering::SeqCst);
+    riscv::NUM_CPUS.fetch_add(1, Ordering::SeqCst);
 
     asm!("mret", in("a0") core_id, in("a1") dtb);
     core::hint::unreachable_unchecked();
@@ -241,14 +187,95 @@ unsafe fn read_dtb(dtb: *const u8) -> Result<DtbRead, DevTreeError> {
     Ok(DtbRead { initrd })
 }
 
-unsafe extern "C" fn kern_main(core_id: usize, dtb: *const u8) -> ! {
+unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
     let endaddr = &SEC_END as *const _ as usize;
     if core_id != 0 {
         loop {}
     }
 
     crate::print::init();
-    let DtbRead { initrd } = read_dtb(dtb).expect("dtb");
+    let DtbRead {
+        initrd: initrd_slice,
+    } = read_dtb(dtb).expect("dtb");
+
+    // CORE0
+    let kern = FileName(*b"kern\0\0\0\0\0\0\0\0\0\0\0");
+
+    let initrd = microflop::Microflop::new(initrd_slice).expect("failed to open initrd");
+    let mut files = initrd.files();
+    let mut kern_slice = None;
+    while let Some((name, content)) = files.next().expect("initrd parse err") {
+        if name == kern {
+            kern_slice = Some(content);
+        }
+    }
+    let kern_slice = kern_slice.expect("could not find kern in initrd");
+    let (hdr, headers) = loader::get_headers(kern_slice).expect("kern elf load err");
+
+    let header_to_span = |h: &ProgramHeader| {
+        if h.p_type != PT_LOAD {
+            None
+        } else {
+            Some(Span::new(
+                h.p_vaddr as usize,
+                VirtSize(h.p_vaddr as usize + h.p_memsz as usize)
+                    .round_up(PageSize::Page4k)
+                    .unwrap()
+                    .get(),
+            ))
+        }
+    };
+    let first_header = headers
+        .iter()
+        .filter_map(header_to_span)
+        .position(|s| s.len() != 0)
+        .expect("no nonempty regions in the kern elf");
+    let kernel_range = headers[first_header + 1..]
+        .iter()
+        .filter_map(header_to_span)
+        .filter(|s| s.len() != 0)
+        .try_fold(header_to_span(&headers[first_header]).unwrap(), |s1, s2| {
+            s1.merge(s2)
+        })
+        .expect("kernel regions not contiguous");
+
+    // next, load the kernel into contiguous physical memory
+    // at this stage we don't have anything in the physical memory after our end,
+    // of significance, at least
+    let kern_ptr = PhysAddr::new(&SEC_END as *const _ as usize)
+        .round_up(PageSize::Page4k)
+        .unwrap()
+        .as_u8_ptr();
+
+    let kern_range_phys = kernel_range
+        .offset(-(kernel_range.begin() as isize))
+        .offset(kern_ptr as isize);
+    let kern_slice_w = kern_range_phys.as_slice_mut::<MaybeUninit<u8>>();
+    let base = kernel_range.begin();
+
+    // load the image into memory
+    for header in headers.iter().filter(|h| h.p_type == PT_LOAD) {
+        let start_idx = header.p_vaddr as usize - base;
+        let end_idx = start_idx + header.p_filesz as usize;
+        let extra = (header.p_memsz - header.p_filesz) as usize;
+        let end_extra_align = VirtSize(end_idx + extra)
+            .round_up(PageSize::Page4k)
+            .unwrap()
+            .get();
+        // transmute is ok because it is transmuting slice of init to slice of
+        // MaybeUninit, identical layout.
+        kern_slice_w[start_idx..end_idx].copy_from_slice(mem::transmute::<_, &[MaybeUninit<u8>]>(
+            &kern_slice[header.p_offset as usize..(header.p_offset + header.p_filesz) as usize],
+        ));
+        // fill till the end of the section
+        kern_slice_w[end_idx..end_extra_align].fill(MaybeUninit::new(0));
+    }
+
+    log::debug!(
+        "kernel range is {:?}, phys: {:?}",
+        &kernel_range,
+        &kern_range_phys
+    );
     info!("init physical memory allocator");
     for page in (endaddr..addr::PHYSMEM + addr::PHYSMEM_LEN).step_by(4096) {
         //println!("wtf {:x}", page);
@@ -256,8 +283,10 @@ unsafe extern "C" fn kern_main(core_id: usize, dtb: *const u8) -> ! {
         // If the page intersects initrd, we don't want to clobber it
         // We don't really care so much about clobbering dtb.
         let page_span = Span::new(page, page + 4096);
-        let initrd_span = initrd.into();
-        if page_span.intersect(initrd_span).is_some() {
+        let initrd_span = initrd_slice.into();
+        if page_span.intersect(initrd_span).is_some()
+            || page_span.intersect(kern_range_phys).is_some()
+        {
             continue;
         }
         PhysMem::free(PhysAddr::new(page))
@@ -282,73 +311,110 @@ unsafe extern "C" fn kern_main(core_id: usize, dtb: *const u8) -> ! {
     task.kernel_satp = satp;
     set_running_task(task as *mut _ as usize);
 
+    // ALL CORES
+    for header in headers.iter().filter(|h| h.p_type == PT_LOAD) {
+        // load the page into VM space
+        let pa = header.p_vaddr as usize - base + kern_range_phys.begin();
+        let pa = PhysAddr::new(pa);
+        let va = VirtAddr(header.p_vaddr as usize);
+        let len = VirtSize(header.p_memsz as usize)
+            .round_up(PageSize::Page4k)
+            .unwrap()
+            .get();
+        let flags = flags_to_riscv(header.p_flags);
+        log::debug!("map {:?} -> {:?} len {:x} flags {:?}", va, pa, len, flags);
+        root_pt
+            .virt_map(pa, va, len, flags)
+            .expect("failed to map kernel mem");
+    }
+
+    info!("map shoo");
     let textaddr = &SEC_TEXT as *const _ as usize;
     let etextaddr = &SEC_ETEXT as *const _ as usize;
-    virt_map(
-        root_pt,
-        PhysAddr::new(textaddr),
-        VirtAddr(textaddr),
-        etextaddr.checked_sub(textaddr).unwrap(),
-        PteAttrs::R | PteAttrs::X,
-    )
-    .unwrap();
+    root_pt
+        .virt_map(
+            PhysAddr::new(textaddr),
+            VirtAddr(textaddr),
+            etextaddr.checked_sub(textaddr).unwrap(),
+            PteAttrs::R | PteAttrs::X,
+        )
+        .unwrap();
 
     let rodataaddr = &SEC_RODATA as *const _ as usize;
     let erodataaddr = &SEC_ERODATA as *const _ as usize;
-    virt_map(
-        root_pt,
-        PhysAddr::new(rodataaddr),
-        VirtAddr(rodataaddr),
-        erodataaddr.checked_sub(rodataaddr).unwrap(),
-        PteAttrs::R.into(),
-    )
-    .unwrap();
+    root_pt
+        .virt_map(
+            PhysAddr::new(rodataaddr),
+            VirtAddr(rodataaddr),
+            erodataaddr.checked_sub(rodataaddr).unwrap(),
+            PteAttrs::R.into(),
+        )
+        .unwrap();
 
     let srwdataaddr = &SEC_SRWDATA as *const _ as usize;
-    virt_map(
-        root_pt,
-        PhysAddr::new(srwdataaddr),
-        VirtAddr(srwdataaddr),
-        endaddr.checked_sub(srwdataaddr).unwrap(),
-        PteAttrs::R | PteAttrs::W,
-    )
-    .unwrap();
-
-    for offs in (0..PHYSMEM_LEN).step_by(PageSize::Page1g.size()) {
-        virt_map_one(
-            root_pt,
-            PhysAddr::new(offs),
-            VirtAddr(addr::PHYSMEM_MAP + offs),
-            PageSize::Page1g,
+    root_pt
+        .virt_map(
+            PhysAddr::new(srwdataaddr),
+            VirtAddr(srwdataaddr),
+            endaddr.checked_sub(srwdataaddr).unwrap(),
             PteAttrs::R | PteAttrs::W,
         )
         .unwrap();
+
+    log::info!("map phys mem");
+    for offs in (0..PHYSMEM_LEN + PHYSMEM).step_by(PageSize::Page1g.size()) {
+        root_pt
+            .virt_map_one(
+                PhysAddr::new(offs),
+                VirtAddr(addr::PHYSMEM_MAP + offs),
+                PageSize::Page1g,
+                PteAttrs::R | PteAttrs::W,
+            )
+            .unwrap();
     }
 
-    virt_map(
-        root_pt,
-        PhysAddr::new(addr::UART0),
-        VirtAddr(addr::UART0),
-        addr::UART0LEN,
-        PteAttrs::R | PteAttrs::W,
-    )
-    .unwrap();
+    root_pt
+        .virt_map(
+            PhysAddr::new(addr::UART0),
+            VirtAddr(addr::UART0),
+            addr::UART0LEN,
+            PteAttrs::R | PteAttrs::W,
+        )
+        .unwrap();
 
     // TODO: this is probably actually not usable from S-mode so we can probably
     // not map it
-    virt_map(
-        root_pt,
-        PhysAddr::new(addr::CLINT),
-        VirtAddr(addr::CLINT),
-        addr::CLINT_LEN,
-        PteAttrs::R | PteAttrs::W,
-    )
-    .unwrap();
+    root_pt
+        .virt_map(
+            PhysAddr::new(addr::CLINT),
+            VirtAddr(addr::CLINT),
+            addr::CLINT_LEN,
+            PteAttrs::R | PteAttrs::W,
+        )
+        .unwrap();
+
+    info!("allocate kernel stack");
+    // make a new kernel stack
+    let kstack_begin = PHYSMEM_MAP - 0x8000;
+    for page in (kstack_begin..PHYSMEM_MAP).step_by(0x1000) {
+        root_pt
+            .virt_alloc_one(VirtAddr::new(page), PteAttrs::R | PteAttrs::W)
+            .expect("failed to alloc kernel stack");
+    }
+
+    let k_entry_va = hdr.e_entry;
 
     set_satp(satp);
-    (0 as *mut u8).write_volatile(0);
+    info!("paging enabled, jumping to the kernel");
 
-    panic!("test test test!!");
-
-    loop {}
+    // jmp kernel!!!! hell yeah
+    asm!(
+        "mv sp, {}",
+        "jr {}",
+        "1: j 1b",
+        in (reg) PHYSMEM_MAP, // end of the kernel stack
+        in (reg) k_entry_va,
+        in ("a0") core_id,
+        options(noreturn)
+    );
 }

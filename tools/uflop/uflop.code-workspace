@@ -1,0 +1,24 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../crates/microflop"
+		},
+		{
+			"path": "../../crates/spanner"
+		}
+	],
+	"settings": {
+		"rust-analyzer.linkedProjects": [
+			"Cargo.toml"
+		],
+		"rust-analyzer.checkOnSave.overrideCommand": [
+			"cargo",
+			"check",
+			"--message-format=json",
+			"--manifest-path=tools/uflop/Cargo.toml",
+		],
+	}
+}

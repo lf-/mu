@@ -49,8 +49,10 @@ fn list(filename: PathBuf) -> Result<()> {
 fn dump(filename: PathBuf) -> Result<()> {
     let bytes = fs::read(filename)?;
     let mf = Microflop::new(&bytes)?;
-    let mut files = mf.files();
-    while let Some((fname, data)) = files.next()? {
+    let mut files = mf.entries();
+    while let Some((entry, data)) = files.next()? {
+        let fname = entry.fname;
+        println!("Entry: {:?}", &entry);
         println!("File {} - {} bytes", fname.as_str()?, data.len());
         println!("{}", hexdump::HexDumper::new(data));
     }
@@ -69,7 +71,10 @@ fn new(files: &[PathBuf], output: PathBuf) -> Result<()> {
     let mut headers = vec![];
     let mut out_pos = headers_end;
     for (file, fc) in files.iter().zip(file_contents.iter()) {
-        let new_end = out_pos + fc.len();
+        let remain_align = (8 - fc.len() % 8) % 8;
+        let file_end = out_pos + fc.len();
+        let new_end = file_end + remain_align;
+
         let file_name = file
             .file_name()
             .ok_or_else(|| eyre!("no file name on {:?}", file))
@@ -81,7 +86,7 @@ fn new(files: &[PathBuf], output: PathBuf) -> Result<()> {
             fname: FileName::new(file_name)
                 .wrap_err_with(|| eyre!("bad file name {:?}", file_name))?,
             begin: Offset(out_pos.try_into().wrap_err("ran outta u32")?),
-            end: Offset(new_end.try_into().wrap_err("ran outta u32")?),
+            end: Offset(file_end.try_into().wrap_err("ran outta u32")?),
             tag: HeaderEntryType::Entry,
         });
         out_pos = new_end;
@@ -107,8 +112,11 @@ fn new(files: &[PathBuf], output: PathBuf) -> Result<()> {
     for header in headers {
         header.serialize(&mut bw)?;
     }
+    let zeros = [0u8; 7];
     for fc in file_contents {
         bw.write_all(&fc)?;
+        let remain_align = (8 - fc.len() % 8) % 8;
+        bw.write_all(&zeros[..remain_align])?;
     }
 
     Ok(())
