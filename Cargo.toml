@@ -24,4 +24,4 @@ debug = true
 overflow-checks = true
 
 [patch.crates-io]
-fdt-rs = { git = 'https://github.com/lf-/fdt-rs', branch = 'fix-doc' }
+fdt-rs = { git = 'https://github.com/rs-embedded/fdt-rs', branch = 'master' }
