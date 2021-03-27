@@ -5,11 +5,14 @@ members = [
     "crates/fidget_spinner",
     "crates/hexdump",
     "crates/microflop",
+    "crates/mu",
+    "crates/mu_shared",
     "crates/riscv",
     "crates/riscv_paging",
-    "crates/typesafe_ints",
     "crates/spanner",
+    "crates/typesafe_ints",
     "tools/uflop",
+    "user/init",
 ]
 # We don't build ANYTHING by default, because everything is target specific
 default-members = []

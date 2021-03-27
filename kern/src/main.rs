@@ -1,9 +1,11 @@
 #![no_std]
 #![no_main]
 
+mod exc;
+mod tframe;
+
 use log::info;
 use riscv::{arch::freeze_hart, println};
-use static_assertions::assert_type_eq_all;
 
 /// Checks at compile time that the kern_main conforms to the ABI expected by
 /// its caller in `shoo`.

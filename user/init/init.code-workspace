@@ -3,35 +3,26 @@
 		{
 			"path": "."
 		},
-		{
-			"path": "../docs"
-		},
-		{
-			"path": "../crates/riscv"
-		},
-		{
-			"path": "../crates/riscv_paging"
-		},
-		{
-			"path": "../crates"
-		}
 	],
 	"settings": {
-		"rust-analyzer.cargo.target": "../riscv64imac-mu-kern-elf.json",
+		"rust-analyzer.cargo.target": "../../riscv64imac-mu-user-elf.json",
 		"rust-analyzer.checkOnSave.allTargets": false,
 		"rust-analyzer.checkOnSave.overrideCommand": [
 			"cargo",
 			"check",
 			"--message-format=json",
 			"-p",
-			"kern",
+			"init",
 			"--target",
-			"./riscv64imac-mu-kern-elf.json",
+			"./riscv64imac-mu-user-elf.json",
 			"-Zbuild-std=core,compiler_builtins",
 			"-Zbuild-std-features=compiler-builtins-mem"
 		],
 		"rust-analyzer.linkedProjects": [
 			"Cargo.toml"
-		]
+		],
+		"rust-analyzer.server.extraEnv": {
+			"RA_LOG": "info,salsa::derived::slot=warn,flycheck=trace,rust_analyzer::main_loop=warn"
+		}
 	}
 }

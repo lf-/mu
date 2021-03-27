@@ -97,8 +97,31 @@ unsafe extern "C" fn startup(core_id: usize, dtb: *const u8) {
     set_core_id(core_id);
     riscv::NUM_CPUS.fetch_add(1, Ordering::SeqCst);
 
+    setup_pmps();
+
     asm!("mret", in("a0") core_id, in("a1") dtb);
-    core::hint::unreachable_unchecked();
+    unreachable!("mret did Not");
+}
+
+/// sets up PMP registers so we can boot
+unsafe fn setup_pmps() {
+    // TODO: I probably should actually use these to protect the M-mode owned
+    // regions. but for now, i cant be bothered
+    //
+    // this was stolen from my https://github.com/mit-pdos/xv6-riscv/pull/62
+
+    const PMP_R: u64 = 1 << 0;
+    const PMP_W: u64 = 1 << 1;
+    const PMP_X: u64 = 1 << 2;
+    const PMP_MATCH_NAPOT: u64 = 3 << 3;
+
+    let pmpcfg = PMP_R | PMP_W | PMP_X | PMP_MATCH_NAPOT;
+    let pmpaddr = (!0u64) >> 10;
+
+    asm!("
+        csrw pmpcfg0, {pmpcfg}
+        csrw pmpaddr0, {pmpaddr}
+    ", pmpcfg = in(reg) pmpcfg, pmpaddr = in(reg) pmpaddr);
 }
 
 /// Data we get from reading the device tree

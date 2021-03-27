@@ -191,7 +191,7 @@ MACHINE_VECTORS:
 m_exc_tab:
     e_insn_addr_misalign: j e_insn_addr_misalign
     e_insn_access_fault: j e_insn_access_fault
-    e_ill_insn: j e_ill_insn
+    e_ill_insn: j m_ill_insn
     e_breakpoint: j e_breakpoint
     e_load_misalign: j e_load_misalign
     e_load_fault: j e_load_fault
@@ -207,11 +207,21 @@ m_exc_tab:
     e_load_pagefault: j e_load_pagefault
     e_reserved14: j e_reserved14
     e_atomic_pagefault: j e_atomic_pagefault
-    // 16+ are unimplemented
+    // XXX: check your data sheet for other possible exceptions above 16. if
+    // those exist, spicy UB will happen here as it will fall onto some other
+    // code below.
 m_sw_tab:
     j m_InterruptHart
     j m_ClearTimerInt
 .option pop
+
+// for convenience in gdb these get stuffed into regs. this is not actually
+// required, the full architectural register state can be dumped in qemu
+// trivially with `info registers` in the monitor.
+m_ill_insn:
+    csrr a0, mcause
+    csrr a1, mepc
+    1: j 1b
 
 m_exc:
     csrrw a2, mscratch, a2
