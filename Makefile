@@ -46,7 +46,7 @@ clean:
 qemu: cargo initrd
 	$(QEMU) $(QEMUOPTS) -s
 
-qemu-gdb: cargo
+qemu-gdb: cargo initrd
 	@echo "Run 'make gdb' in another terminal to connect"
 	$(QEMU) $(QEMUOPTS) -s -S
 

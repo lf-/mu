@@ -7,11 +7,12 @@ use core::{cell::UnsafeCell, ffi::c_void, ptr};
 use riscv::{
     arch::Satp,
     globals::{HasEmpty, PerHartMut},
+    paging::VirtAddr,
 };
 
 pub type TrapHandler = unsafe extern "C" fn(*mut TrapFrame) -> !;
 
-static TRAP_FRAMES: PerHartMut<TrapFrame> = PerHartMut::new();
+pub static TRAP_FRAMES: PerHartMut<TrapFrame> = PerHartMut::new();
 
 /// The contents of a trap frame. This is used when entering the kernel from an
 /// exception or other reason.
@@ -19,10 +20,11 @@ static TRAP_FRAMES: PerHartMut<TrapFrame> = PerHartMut::new();
 #[repr(C)]
 pub struct TrapFrame {
     pub regs: [usize; 31],
-    pub target_fn: TrapHandler,
-    pub hart_id: usize,
-    pub kernel_sp: *mut c_void,
-    pub new_satp: Satp,
+    /* 0 */ pub target_fn: TrapHandler,
+    /* 1 */ pub hart_id: usize,
+    /* 2 */ pub kernel_sp: *mut c_void,
+    /* 3 */ pub new_satp: Satp,
+    /* 4 */ pub user_pc: VirtAddr,
 }
 
 impl HasEmpty for TrapFrame {
@@ -32,6 +34,7 @@ impl HasEmpty for TrapFrame {
         hart_id: !0,
         kernel_sp: ptr::null_mut(),
         new_satp: Satp::DISABLED,
+        user_pc: VirtAddr(!0),
     });
 }
 

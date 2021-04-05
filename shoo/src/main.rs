@@ -390,14 +390,16 @@ unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
     set_satp(satp);
     info!("paging enabled, jumping to the kernel");
 
+    let entry_params_size = mem::size_of::<KernelEntryParams>();
+    // i think sp needs to be aligned to 16
+    let sp = (PHYSMEM_MAP - entry_params_size) & !(16 - 1);
+
     let entry_params = KernelEntryParams {
         core_id,
         init_entrypoint: VirtAddr(init_hdr.e_entry as usize),
+        stack_pointer: sp,
     };
 
-    let entry_params_size = mem::size_of_val(&entry_params);
-    // i think sp needs to be aligned to 16
-    let sp = (PHYSMEM_MAP - entry_params_size) & !(16 - 1);
     let params_ptr = (PHYSMEM_MAP - entry_params_size) as *mut KernelEntryParams;
     params_ptr.copy_from_nonoverlapping(&entry_params, 1);
 

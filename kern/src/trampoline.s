@@ -77,10 +77,17 @@ s_enter:
     // we should have good kernel regs now
     jr t0
 
-.globl enter_userspace
+.globl k_enter_userspace
 // unsafe extern "C" fn k_enter_userspace(*mut TrapFrame) -> !
 k_enter_userspace:
     csrw sscratch, a0
+
+    // mask off spp to get spp=0 => enter user mode
+    li t0, (1 << 8)
+    csrc sstatus, t0
+
+    ld t0, 8*31+4*8(a0)
+    csrw sepc, t0
 
     // trap frame must still be mapped here
     ld t0, 8*31+3*8(a0)
