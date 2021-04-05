@@ -7,6 +7,7 @@ pub mod arch;
 pub mod globals;
 pub mod print;
 
+use paging::VirtAddr;
 pub use riscv_paging as paging;
 
 use core::fmt::Write;
@@ -20,7 +21,7 @@ pub static PANICKED: AtomicBool = AtomicBool::new(false);
 pub static PANIC_CHECKIN: AtomicUsize = AtomicUsize::new(0);
 pub static NUM_CPUS: AtomicUsize = AtomicUsize::new(0);
 
-pub type KernEntry = extern "C" fn(core_id: usize) -> !;
+pub type KernEntry = extern "C" fn(core_id: &KernelEntryParams) -> !;
 
 #[panic_handler]
 fn panic_handler(info: &PanicInfo) -> ! {
@@ -72,4 +73,10 @@ fn panic_handler(info: &PanicInfo) -> ! {
     }
 
     freeze_hart()
+}
+
+#[repr(C)]
+pub struct KernelEntryParams {
+    pub core_id: usize,
+    pub init_entrypoint: VirtAddr,
 }

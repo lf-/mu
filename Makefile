@@ -1,6 +1,6 @@
 # stolen from https://github.com/mit-pdos/xv6-riscv/blob/riscv/Makefile
 QEMU = /opt/qemu/bin/qemu-system-riscv64
-GDB = /opt/riscv/bin/riscv64-gdb
+GDB = /opt/gdb/bin/gdb
 # TODO: UP for the minute
 CPUS = 1
 STAGE1 = target/riscv64imac-mu-shoo-elf/release/shoo

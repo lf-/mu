@@ -119,6 +119,11 @@ impl Span {
         }
     }
 
+    /// Like offset but it takes a usize. Like [`core::ptr::add`].
+    pub fn add(&self, addend: usize) -> Span {
+        self.offset(addend as isize)
+    }
+
     /// Offsets the beginning and ending of the span
     pub fn offset(&self, offs: isize) -> Span {
         Span {

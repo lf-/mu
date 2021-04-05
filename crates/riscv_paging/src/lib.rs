@@ -24,10 +24,12 @@ pub struct PhysAddr<P: PhysAccess>(usize, PhantomData<P>);
 
 /// A newtype wrapper around a virtual address.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
 pub struct VirtAddr(pub usize);
 
 /// A newtype wrapper around a virtual space size
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
 pub struct VirtSize(pub usize);
 
 /// Operations that can be performed on a memory address

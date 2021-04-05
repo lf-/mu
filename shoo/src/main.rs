@@ -14,22 +14,23 @@ use core::{ffi::c_void, sync::atomic::Ordering};
 
 #[macro_use]
 extern crate riscv;
+
 use addr::{PHYSMEM, PHYSMEM_MAP};
 use goblin::elf64::program_header::{ProgramHeader, PT_LOAD};
-use loader::flags_to_riscv;
+use loader::{flags_to_riscv, load_image, map_executable, ImageLoadInfo};
 use microflop::FileName;
-use riscv::addr;
 use riscv::addr::PHYSMEM_LEN;
 use riscv::arch::*;
 use riscv::globals::*;
 use riscv::print;
+use riscv::{addr, KernelEntryParams};
 use riscv_paging::{Addr, PageSize, PageTable, PhysAccess, PteAttrs, VirtAddr, VirtSize};
+use spanner::Span;
 
 use bitvec::prelude::*;
 use fdt_rs::{base::DevTree, error::DevTreeError};
 use fdt_rs::{base::DevTreeNode, prelude::*};
 use log::info;
-use spanner::Span;
 
 const BANNER: &'static str = include_str!("logo.txt");
 
@@ -223,82 +224,42 @@ unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
 
     // CORE0
     let kern = FileName(*b"kern\0\0\0\0\0\0\0\0\0\0\0");
+    let init = FileName(*b"init\0\0\0\0\0\0\0\0\0\0\0");
 
     let initrd = microflop::Microflop::new(initrd_slice).expect("failed to open initrd");
     let mut files = initrd.files();
     let mut kern_slice = None;
+    let mut init_slice = None;
     while let Some((name, content)) = files.next().expect("initrd parse err") {
-        if name == kern {
-            kern_slice = Some(content);
+        match name {
+            n if n == kern => kern_slice = Some(content),
+            n if n == init => init_slice = Some(content),
+            _ => (),
         }
     }
     let kern_slice = kern_slice.expect("could not find kern in initrd");
-    let (hdr, headers) = loader::get_headers(kern_slice).expect("kern elf load err");
+    let init_slice = init_slice.expect("could not find init in initrd");
 
-    let header_to_span = |h: &ProgramHeader| {
-        if h.p_type != PT_LOAD {
-            None
-        } else {
-            Some(Span::new(
-                h.p_vaddr as usize,
-                VirtSize(h.p_vaddr as usize + h.p_memsz as usize)
-                    .round_up(PageSize::Page4k)
-                    .unwrap()
-                    .get(),
-            ))
-        }
-    };
-    let first_header = headers
-        .iter()
-        .filter_map(header_to_span)
-        .position(|s| s.len() != 0)
-        .expect("no nonempty regions in the kern elf");
-    let kernel_range = headers[first_header + 1..]
-        .iter()
-        .filter_map(header_to_span)
-        .filter(|s| s.len() != 0)
-        .try_fold(header_to_span(&headers[first_header]).unwrap(), |s1, s2| {
-            s1.merge(s2)
-        })
-        .expect("kernel regions not contiguous");
-
-    // next, load the kernel into contiguous physical memory
     // at this stage we don't have anything in the physical memory after our end,
     // of significance, at least
-    let kern_ptr = PhysAddr::new(&SEC_END as *const _ as usize)
+    let kern_ptr = PhysAddr::new(endaddr)
         .round_up(PageSize::Page4k)
         .unwrap()
         .as_u8_ptr();
+    let ImageLoadInfo {
+        virt_span: kernel_range_virt,
+        phys_span: kern_range_phys,
+        headers: kernel_headers,
+        elf_header: hdr,
+    } = load_image(kern_slice, kern_ptr);
 
-    let kern_range_phys = kernel_range
-        .offset(-(kernel_range.begin() as isize))
-        .offset(kern_ptr as isize);
-    let kern_slice_w = kern_range_phys.as_slice_mut::<MaybeUninit<u8>>();
-    let base = kernel_range.begin();
+    let ImageLoadInfo {
+        virt_span: init_range_virt,
+        phys_span: init_range_phys,
+        headers: init_headers,
+        elf_header: init_hdr,
+    } = load_image(init_slice, PhysAddr::new(kern_range_phys.end()).as_u8_ptr());
 
-    // load the image into memory
-    for header in headers.iter().filter(|h| h.p_type == PT_LOAD) {
-        let start_idx = header.p_vaddr as usize - base;
-        let end_idx = start_idx + header.p_filesz as usize;
-        let extra = (header.p_memsz - header.p_filesz) as usize;
-        let end_extra_align = VirtSize(end_idx + extra)
-            .round_up(PageSize::Page4k)
-            .unwrap()
-            .get();
-        // transmute is ok because it is transmuting slice of init to slice of
-        // MaybeUninit, identical layout.
-        kern_slice_w[start_idx..end_idx].copy_from_slice(mem::transmute::<_, &[MaybeUninit<u8>]>(
-            &kern_slice[header.p_offset as usize..(header.p_offset + header.p_filesz) as usize],
-        ));
-        // fill till the end of the section
-        kern_slice_w[end_idx..end_extra_align].fill(MaybeUninit::new(0));
-    }
-
-    log::debug!(
-        "kernel range is {:?}, phys: {:?}",
-        &kernel_range,
-        &kern_range_phys
-    );
     info!("init physical memory allocator");
     for page in (endaddr..addr::PHYSMEM + addr::PHYSMEM_LEN).step_by(4096) {
         //println!("wtf {:x}", page);
@@ -314,7 +275,6 @@ unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
         }
         PhysMem::free(PhysAddr::new(page))
     }
-
     // println!("{}", BANNER);
 
     // we will hit this with one core!
@@ -335,21 +295,23 @@ unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
     set_running_task(task as *mut _ as usize);
 
     // ALL CORES
-    for header in headers.iter().filter(|h| h.p_type == PT_LOAD) {
-        // load the page into VM space
-        let pa = header.p_vaddr as usize - base + kern_range_phys.begin();
-        let pa = PhysAddr::new(pa);
-        let va = VirtAddr(header.p_vaddr as usize);
-        let len = VirtSize(header.p_memsz as usize)
-            .round_up(PageSize::Page4k)
-            .unwrap()
-            .get();
-        let flags = flags_to_riscv(header.p_flags);
-        log::debug!("map {:?} -> {:?} len {:x} flags {:?}", va, pa, len, flags);
-        root_pt
-            .virt_map(pa, va, len, flags)
-            .expect("failed to map kernel mem");
-    }
+    map_executable(
+        root_pt,
+        kern_range_phys,
+        kernel_range_virt,
+        kernel_headers,
+        PteAttrs::empty(),
+    )
+    .expect("failed to map kernel");
+
+    map_executable(
+        root_pt,
+        init_range_phys,
+        init_range_virt,
+        init_headers,
+        PteAttrs::User,
+    )
+    .expect("failed to map kernel");
 
     info!("map shoo");
     let textaddr = &SEC_TEXT as *const _ as usize;
@@ -425,19 +387,30 @@ unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
             .expect("failed to alloc kernel stack");
     }
 
-    let k_entry_va = hdr.e_entry;
-
     set_satp(satp);
     info!("paging enabled, jumping to the kernel");
+
+    let entry_params = KernelEntryParams {
+        core_id,
+        init_entrypoint: VirtAddr(init_hdr.e_entry as usize),
+    };
+
+    let entry_params_size = mem::size_of_val(&entry_params);
+    // i think sp needs to be aligned to 16
+    let sp = (PHYSMEM_MAP - entry_params_size) & !(16 - 1);
+    let params_ptr = (PHYSMEM_MAP - entry_params_size) as *mut KernelEntryParams;
+    params_ptr.copy_from_nonoverlapping(&entry_params, 1);
+
+    let k_entry_va = hdr.e_entry;
 
     // jmp kernel!!!! hell yeah
     asm!(
         "mv sp, {}",
         "jr {}",
         "1: j 1b",
-        in (reg) PHYSMEM_MAP, // end of the kernel stack
+        in (reg) sp, // end of the kernel stack
         in (reg) k_entry_va,
-        in ("a0") core_id,
+        in ("a0") params_ptr,
         options(noreturn)
     );
 }
