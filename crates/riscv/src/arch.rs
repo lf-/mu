@@ -293,9 +293,12 @@ pub enum TranslationMode {
 
 /// `satp` CSR
 #[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
 pub struct Satp(pub u64);
 
 impl Satp {
+    pub const DISABLED: Satp = Satp(0);
+
     /// Makes the `satp` register required for using the given page table
     pub fn new(pt: &PageTable<PhysMem>, asid: u16, mode: TranslationMode) -> Satp {
         let ppn = pt.get_base().get() / (PAGE_SIZE as usize);
@@ -307,6 +310,29 @@ impl Satp {
         let mut satp = Satp(v);
         satp.set_mode(mode);
         satp
+    }
+
+    /// Gets the current Satp. Convenience function.
+    pub fn current() -> Satp {
+        unsafe { get_satp() }
+    }
+
+    /// Turns the Satp into a page table. Will fail if the Satp has the wrong
+    /// mode.
+    pub unsafe fn as_pagetable(&self) -> Option<PageTable<PhysMem>> {
+        if matches!(self.mode(), TranslationMode::Sv39) {
+            Some(PageTable::from_raw(Phys::new_raw(
+                (self.ppn() * PAGE_SIZE) as usize,
+            )))
+        } else {
+            None
+        }
+    }
+
+    /// Gets the physical page number in the Satp
+    pub fn ppn(&self) -> u64 {
+        let v = self.0.view_bits::<Lsb0>();
+        v[0..=43].load()
     }
 
     /// gets the current mode

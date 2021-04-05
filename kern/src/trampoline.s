@@ -5,8 +5,8 @@
 .option norvc
 .globl K_SUPERVISOR_VECTORS
 K_SUPERVISOR_VECTORS:
-    s_exc_vec: j s_exc
-    s_isr_sw_vec: j s_isr_sw
+    s_exc_vec: j s_exc_vec
+    s_isr_sw_vec: j s_isr_sw_vec
     s_reserved2: j s_reserved2
     s_reserved3: j s_reserved3
     s_reserved4: j s_reserved4
@@ -64,48 +64,61 @@ s_enter:
     mv x2, x1
     csrrw x1, sscratch, x1
     sd x1, 8*0(x2)
-    // first arg to entry is the pointer to our CPU's Task with regs
+    // first arg to entry is the pointer to our CPU's TrapFrame with regs
     mv a0, x2
+
+    // .target_fn
+    ld t0, 8*31(a0)
 
     // now try to get a coherent set of regs for kernel entry
     ld sp, 8*31+8*2(a0)
     ld tp, 8*31+8*1(a0)
 
     // we should have good kernel regs now
-    call k_entry
+    jr t0
 
-    csrr x1, sscratch
-    ld x2,  8*1(x1)
-    ld x3,  8*2(x1)
-    ld x4,  8*3(x1)
-    ld x5,  8*4(x1)
-    ld x6,  8*5(x1)
-    ld x7,  8*6(x1)
-    ld x8,  8*7(x1)
-    ld x9,  8*8(x1)
-    ld x10, 8*9(x1)
-    ld x11, 8*10(x1)
-    ld x12, 8*11(x1)
-    ld x13, 8*12(x1)
-    ld x14, 8*13(x1)
-    ld x15, 8*14(x1)
-    ld x16, 8*15(x1)
-    ld x17, 8*16(x1)
-    ld x18, 8*17(x1)
-    ld x19, 8*18(x1)
-    ld x20, 8*19(x1)
-    ld x21, 8*20(x1)
-    ld x22, 8*21(x1)
-    ld x23, 8*22(x1)
-    ld x24, 8*23(x1)
-    ld x25, 8*24(x1)
-    ld x26, 8*25(x1)
-    ld x27, 8*26(x1)
-    ld x28, 8*27(x1)
-    ld x29, 8*28(x1)
-    ld x30, 8*29(x1)
-    ld x31, 8*30(x1)
-    ld x1, 8*0(x1)
+.globl enter_userspace
+// unsafe extern "C" fn k_enter_userspace(*mut TrapFrame) -> !
+k_enter_userspace:
+    csrw sscratch, a0
+
+    // trap frame must still be mapped here
+    ld t0, 8*31+3*8(a0)
+    csrw satp, t0
+    sfence.vma
+
+    ld x1,  8*0 (a0)
+    ld x2,  8*1 (a0)
+    ld x3,  8*2 (a0)
+    ld x4,  8*3 (a0)
+    ld x5,  8*4 (a0)
+    ld x6,  8*5 (a0)
+    ld x7,  8*6 (a0)
+    ld x8,  8*7 (a0)
+    ld x9,  8*8 (a0)
+    // a0 here
+    ld x11, 8*10(a0)
+    ld x12, 8*11(a0)
+    ld x13, 8*12(a0)
+    ld x14, 8*13(a0)
+    ld x15, 8*14(a0)
+    ld x16, 8*15(a0)
+    ld x17, 8*16(a0)
+    ld x18, 8*17(a0)
+    ld x19, 8*18(a0)
+    ld x20, 8*19(a0)
+    ld x21, 8*20(a0)
+    ld x22, 8*21(a0)
+    ld x23, 8*22(a0)
+    ld x24, 8*23(a0)
+    ld x25, 8*24(a0)
+    ld x26, 8*25(a0)
+    ld x27, 8*26(a0)
+    ld x28, 8*27(a0)
+    ld x29, 8*28(a0)
+    ld x30, 8*29(a0)
+    ld x31, 8*30(a0)
+    ld x10, 8*9 (a0)
     // regs are all back to normal
 
     sret

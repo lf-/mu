@@ -3,28 +3,39 @@ QEMU = /opt/qemu/bin/qemu-system-riscv64
 GDB = /opt/riscv/bin/riscv64-gdb
 # TODO: UP for the minute
 CPUS = 1
-KERNEL = target/riscv64imac-mu-shoo-elf/release/shoo
+STAGE1 = target/riscv64imac-mu-shoo-elf/release/shoo
 CARGOFLAGS = --release
 # RUST_TARGET_PATH = $(shell realpath ..)
 # export RUST_TARGET_PATH
 
-QEMUOPTS = -machine virt -bios none -kernel $(KERNEL) -initrd initrd -m 128M -smp $(CPUS) -nographic
+QEMUOPTS = -machine virt -bios none -kernel $(STAGE1) -initrd initrd -m 128M -smp $(CPUS) -nographic
 # debug on port 1234
 #QEMUOPTS += -s
 #QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 #QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
+user_targets = init
+user_target_prefix = target/riscv64imac-mu-user-elf/release
+user_target_files = $(addprefix $(user_target_prefix)/,$(user_targets))
+kern = target/riscv64imac-mu-kern-elf/release/kern
+
 # initrd is phony because it is very cheap to build but it's super hard to
 # track its deps with make
-.PHONY: qemu cargo clean initrd target/riscv64imac-mu-kern-elf/release/kern
+.PHONY: qemu cargo clean initrd $(kern) fake_userspace_target
+
+initrd: $(kern) $(user_target_files)
+	cargo run -p uflop -- new -o initrd $^
+
 cargo:
 	(cd shoo; cargo build $(CARGOFLAGS))
 
-target/riscv64imac-mu-kern-elf/release/kern:
+$(kern):
 	(cd kern; cargo build $(CARGOFLAGS))
 
-initrd: target/riscv64imac-mu-kern-elf/release/kern
-	cargo run -p uflop -- new -o initrd $^
+fake_userspace_target:
+
+$(user_target_prefix)/%: fake_userspace_target
+	(cd user/$*; cargo build $(CARGOFLAGS))
 
 clean:
 	rm initrd
@@ -43,7 +54,7 @@ gdb:
 	$(GDB)
 
 ifeq ($(OPEN),1)
-  DOC = --open
+DOC = --open
 endif
 
 doc:

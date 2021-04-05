@@ -1,11 +1,11 @@
 #![no_std]
 #![no_main]
 
-mod exc;
+pub mod exc;
 mod tframe;
 
 use log::info;
-use riscv::{arch::freeze_hart, println};
+use riscv::arch::freeze_hart;
 
 /// Checks at compile time that the kern_main conforms to the ABI expected by
 /// its caller in `shoo`.

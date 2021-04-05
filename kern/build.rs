@@ -13,6 +13,6 @@ fn main() {
 
     builder.clone().file("src/trampoline.s").compile("kern_asm");
 
-    println!("cargo:rerun-if-changed=src/vectors.s");
+    println!("cargo:rerun-if-changed=src/trampoline.s");
     println!("cargo:rerun-if-changed=kern.ld");
 }

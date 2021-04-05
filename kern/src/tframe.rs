@@ -1,10 +1,17 @@
 //! Implementation of a trap frame
 
-use core::ffi::c_void;
 use core::fmt::Display;
 use core::iter;
+use core::{cell::UnsafeCell, ffi::c_void, ptr};
 
-use riscv::arch::Satp;
+use riscv::{
+    arch::Satp,
+    globals::{HasEmpty, PerHartMut},
+};
+
+pub type TrapHandler = unsafe extern "C" fn(*mut TrapFrame) -> !;
+
+static TRAP_FRAMES: PerHartMut<TrapFrame> = PerHartMut::new();
 
 /// The contents of a trap frame. This is used when entering the kernel from an
 /// exception or other reason.
@@ -12,9 +19,24 @@ use riscv::arch::Satp;
 #[repr(C)]
 pub struct TrapFrame {
     pub regs: [usize; 31],
-    pub _unused: Satp,
+    pub target_fn: TrapHandler,
     pub hart_id: usize,
     pub kernel_sp: *mut c_void,
+    pub new_satp: Satp,
+}
+
+impl HasEmpty for TrapFrame {
+    const EMPTY: core::cell::UnsafeCell<Self> = UnsafeCell::new(TrapFrame {
+        regs: [0; 31],
+        target_fn: unreachable_default_fn,
+        hart_id: !0,
+        kernel_sp: ptr::null_mut(),
+        new_satp: Satp::DISABLED,
+    });
+}
+
+unsafe extern "C" fn unreachable_default_fn(_: *mut TrapFrame) -> ! {
+    panic!("should not have jumped to a default trap frame target function");
 }
 
 /// Helper struct that `impl`s [Display] for the registers of a TrapFrame

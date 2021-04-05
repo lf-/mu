@@ -1,6 +1,8 @@
 //! Machine-specific constants
 
 #![allow(dead_code)]
+
+use riscv_paging::VirtAddr;
 // https://github.com/qemu/qemu/blob/master/hw/riscv/virt.c
 // static const struct MemmapEntry {
 //     hwaddr base;
@@ -34,3 +36,5 @@ pub const PHYSMEM_LEN: usize = 128 * 1024 * 1024;
 
 pub const MAX_VIRT: usize = 0xffff_ffff_ffff_ffff; // sx(0x80_0000_0000)
 pub const PHYSMEM_MAP: usize = 0xffff_ffe0_0000_0000; // sx(0x60_0000_0000)
+
+pub const TRAP_DATA: VirtAddr = VirtAddr(0xffff_ffc0_0000_1000);

@@ -1,6 +1,9 @@
+// init process
 #![no_std]
 
+extern crate mu;
+
 fn main() {
-    // bro
+    log::info!("hi from init!");
     loop {}
 }

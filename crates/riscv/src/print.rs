@@ -41,6 +41,8 @@ pub struct Serial {
     base: *mut u8,
 }
 
+unsafe impl Send for Serial {}
+
 // Baud rates available for the serial port
 #[repr(u16)]
 pub enum Baudrate {

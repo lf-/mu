@@ -7,6 +7,8 @@ pub mod arch;
 pub mod globals;
 pub mod print;
 
+pub use riscv_paging as paging;
+
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::sync::atomic::*;

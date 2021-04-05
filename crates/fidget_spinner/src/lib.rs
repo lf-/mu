@@ -22,7 +22,7 @@ pub trait ArchDetails {
 ///
 /// This is almost certainly unsound if panic is not abort. Fortunately, we are a
 /// kernel
-pub struct Mutex<T, A: ArchDetails> {
+pub struct Mutex<T: Send, A: ArchDetails> {
     inner: UnsafeCell<T>,
     ticket: AtomicUsize,
     next_ticket: AtomicUsize,
@@ -31,15 +31,15 @@ pub struct Mutex<T, A: ArchDetails> {
     _arch_details: PhantomData<A>,
 }
 
-unsafe impl<T, A: ArchDetails> Sync for Mutex<T, A> {}
-unsafe impl<T, A: ArchDetails> Send for Mutex<T, A> {}
+unsafe impl<T: Send, A: ArchDetails> Sync for Mutex<T, A> {}
+unsafe impl<T: Send, A: ArchDetails> Send for Mutex<T, A> {}
 
 #[must_use = "you need to use this to use the mutex"]
-pub struct LockGuard<'a, T, A: ArchDetails> {
+pub struct LockGuard<'a, T: Send, A: ArchDetails> {
     mutex: &'a Mutex<T, A>,
 }
 
-impl<T, A: ArchDetails> Mutex<T, A> {
+impl<T: Send, A: ArchDetails> Mutex<T, A> {
     /// Makes a Mutex
     pub const fn new(inner: T) -> Mutex<T, A> {
         Mutex {
@@ -92,7 +92,7 @@ impl<T, A: ArchDetails> Mutex<T, A> {
     }
 }
 
-impl<T, A: ArchDetails> Deref for LockGuard<'_, T, A> {
+impl<T: Send, A: ArchDetails> Deref for LockGuard<'_, T, A> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -102,7 +102,7 @@ impl<T, A: ArchDetails> Deref for LockGuard<'_, T, A> {
     }
 }
 
-impl<T, A: ArchDetails> DerefMut for LockGuard<'_, T, A> {
+impl<T: Send, A: ArchDetails> DerefMut for LockGuard<'_, T, A> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // safety: you have the lock guard which can only be created by locking
         // the object
@@ -110,7 +110,7 @@ impl<T, A: ArchDetails> DerefMut for LockGuard<'_, T, A> {
     }
 }
 
-impl<T, A: ArchDetails> Drop for LockGuard<'_, T, A> {
+impl<T: Send, A: ArchDetails> Drop for LockGuard<'_, T, A> {
     fn drop(&mut self) {
         self.mutex.owner.store(!0, Ordering::SeqCst);
         self.mutex

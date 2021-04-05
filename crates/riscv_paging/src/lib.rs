@@ -1,7 +1,8 @@
 //! A memory manager for RISC-V. Currently only Sv39 is supported (512GB address
 //! space).
+// TODO: This is doing a whole load of unsound shit with forgetting to use
+// volatile ops with pointers
 #![cfg(any(all(target_pointer_width = "64", test), target_arch = "riscv64"))]
-#![feature(slice_fill)]
 #![feature(asm)]
 #![feature(try_trait)]
 #![allow(non_upper_case_globals)]
@@ -140,6 +141,13 @@ impl<P: PhysAccess> Addr for PhysAddr<P> {
 }
 
 impl VirtAddr {
+    /// Gets the virtual address as an arbitrary pointer type
+    ///
+    /// This function is probably a mistake.
+    pub fn as_mut_ptr<T>(self) -> *mut T {
+        self.0 as *mut _
+    }
+
     /// Only considers the lower 39 bits, chopping off the top bits
     fn canonicalize(self) -> VirtAddr {
         VirtAddr(self.0.view_bits::<Lsb0>()[0..=38].load())
@@ -243,7 +251,15 @@ bitflags::bitflags!(
     }
 );
 
+impl PteAttrs {
+    fn is_leaf(self) -> bool {
+        self.intersects(PteAttrs::R | PteAttrs::W | PteAttrs::X)
+    }
+}
+
 impl Pte {
+    const UNMAPPED: Pte = Pte(0);
+
     /// Makes a page table entry with the given attributes
     fn new<P: PhysAccess>(pa: PhysAddr<P>, attrs: PteAttrs) -> Pte {
         let mut inner = 0u64;
@@ -312,8 +328,14 @@ impl<P: PhysAccess> PageTable<P> {
     /// Gets the entry at the index `num` in the page table. Panics if it is out
     /// of range (this is always a bug).
     pub unsafe fn entry(&self, num: u16) -> Pte {
+        self.entry_ptr(num).read_volatile()
+    }
+
+    /// Gets a pointer to the given page table entry. Panics if it is out of
+    /// range.
+    pub fn entry_ptr(&self, num: u16) -> *mut Pte {
         assert!(num < PT_ENTRIES as u16, "page table entry out of range");
-        self.base.as_ptr().offset(num as isize).read_volatile()
+        unsafe { self.base.as_ptr().add(num as usize) }
     }
 
     /// Gets the base address
@@ -560,6 +582,27 @@ impl<P: PhysAccess> PageTable<P> {
         Ok(())
     }
 
+    pub unsafe fn virt_unmap_one(self, va: VirtAddr) -> Result<(), UnmapError> {
+        let parts = va.parts();
+        let mut pt = self;
+        for i in 0..=2 {
+            let pte = pt.entry(parts[i]);
+            let pte_p = pt.entry_ptr(parts[i]);
+            let (next_ppn, attrs) = pte.decompose();
+            if !attrs.contains(PteAttrs::V) {
+                return Err(UnmapError::NotMapped);
+            }
+
+            if attrs.is_leaf() {
+                pte_p.write_volatile(Pte::UNMAPPED);
+                return Ok(());
+            }
+
+            pt = PageTable::from_raw(Phys::new_raw((next_ppn * PAGE_SIZE) as usize));
+        }
+        Ok(())
+    }
+
     /// Allocates a new page from the pool at `va`.
     pub unsafe fn virt_alloc_one(self, va: VirtAddr, attrs: PteAttrs) -> Result<(), MapError> {
         let page = P::alloc().ok_or(MapError::OOM)?;
@@ -577,6 +620,12 @@ pub enum MapError {
     AlreadyMapped,
     /// ran out of memory
     OOM,
+}
+
+#[derive(Debug)]
+pub enum UnmapError {
+    /// Address was not mapped.
+    NotMapped,
 }
 
 impl core::convert::From<NoneError> for MapError {
