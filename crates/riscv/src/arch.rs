@@ -38,6 +38,7 @@ pub unsafe fn enable_interrupts() {
 
 pub const MSTATUS_MPP: RangeInclusive<usize> = 11..=12;
 pub const MSTATUS_MIE: usize = 3;
+pub const MSTATUS_SUM: usize = 18;
 
 pub const MIE_MTIE: usize = 7;
 
@@ -372,6 +373,12 @@ impl StatusReg {
                 self.0.view_bits::<Lsb0>()[MSTATUS_MPP].load(), //
             )
         }
+    }
+
+    /// Sets Supervisor User Memory (true => S mode accesses to User marked
+    /// memory allowed)
+    pub fn set_sum(&mut self, new: bool) {
+        self.0.view_bits_mut::<Lsb0>().set(MSTATUS_SUM, new);
     }
 
     /// sets the machine previous privilege level (mstatus.MPP)

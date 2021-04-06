@@ -73,6 +73,13 @@ pub trait Addr: Copy {
     fn round_down(self, size: PageSize) -> Option<Self> {
         Some(Self::new(self.get() & !size.offs_mask()))
     }
+
+    /// Offsets the address by the given isize
+    ///
+    /// Does not have overflow checking.
+    fn offset(self, addend: isize) -> Self {
+        Self::new((self.get() as isize + addend) as usize)
+    }
 }
 
 impl<P: PhysAccess> PhysAddr<P> {
@@ -570,9 +577,9 @@ impl<P: PhysAccess> PageTable<P> {
     ) -> Result<(), MapError> {
         assert!(len > 0, "len must be >0");
         // round len up to the nearest page
-        let len = len;
+        let len = VirtSize(len).round_up(PageSize::Page4k).unwrap();
 
-        for offs in (0..len).step_by(PAGE_SIZE as _) {
+        for offs in (0..len.get()).step_by(PAGE_SIZE as _) {
             self.virt_map_one(
                 PhysAddr::new(pa.get().checked_add(offs)?),
                 VirtAddr(va.0.checked_add(offs)?),
@@ -584,6 +591,7 @@ impl<P: PhysAccess> PageTable<P> {
         Ok(())
     }
 
+    /// Unmaps (1) leaf page at the given [`VirtAddr`]
     pub unsafe fn virt_unmap_one(self, va: VirtAddr) -> Result<(), UnmapError> {
         let parts = va.parts();
         let mut pt = self;
@@ -609,6 +617,24 @@ impl<P: PhysAccess> PageTable<P> {
     pub unsafe fn virt_alloc_one(self, va: VirtAddr, attrs: PteAttrs) -> Result<(), MapError> {
         let page = P::alloc().ok_or(MapError::OOM)?;
         self.virt_map_one(page, va, PageSize::Page4k, attrs)
+    }
+
+    /// Allocates a range of memory from the page at `va`.
+    pub unsafe fn virt_alloc(
+        self,
+        va: VirtAddr,
+        len: usize,
+        attrs: PteAttrs,
+    ) -> Result<(), MapError> {
+        assert!(len > 0, "len must be >0");
+        // round len up to the nearest page
+        let len = VirtSize(len).round_up(PageSize::Page4k).unwrap();
+
+        for offs in (0..len.get()).step_by(PAGE_SIZE as _) {
+            self.virt_alloc_one(VirtAddr(va.0.checked_add(offs)?), attrs)?;
+        }
+
+        Ok(())
     }
 }
 

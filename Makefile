@@ -8,7 +8,8 @@ CARGOFLAGS = --release
 # RUST_TARGET_PATH = $(shell realpath ..)
 # export RUST_TARGET_PATH
 
-QEMUOPTS = -machine virt -bios none -kernel $(STAGE1) -initrd initrd -m 128M -smp $(CPUS) -nographic
+QEMUOPTS = -machine virt -bios none -kernel $(STAGE1) -initrd initrd -m 128M \
+			-smp $(CPUS) -nographic -trace enable=riscv_trap
 # debug on port 1234
 #QEMUOPTS += -s
 #QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0

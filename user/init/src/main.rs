@@ -1,9 +1,11 @@
 // init process
 #![no_std]
 
+use mu::syscall;
+
 extern crate mu;
 
 fn main() {
-    log::info!("hi from init!");
+    syscall::log("ffffff");
     loop {}
 }

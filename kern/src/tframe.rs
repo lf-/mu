@@ -20,11 +20,11 @@ pub static TRAP_FRAMES: PerHartMut<TrapFrame> = PerHartMut::new();
 #[repr(C)]
 pub struct TrapFrame {
     pub regs: [usize; 31],
-    /* 0 */ pub target_fn: TrapHandler,
-    /* 1 */ pub hart_id: usize,
-    /* 2 */ pub kernel_sp: *mut c_void,
-    /* 3 */ pub new_satp: Satp,
-    /* 4 */ pub user_pc: VirtAddr,
+    /* 31*8 + 0*8 */ pub target_fn: TrapHandler,
+    /* 31*8 + 1*8 */ pub hart_id: usize,
+    /* 31*8 + 2*8 */ pub kernel_sp: *mut c_void,
+    /* 31*8 + 3*8 */ pub new_satp: Satp,
+    /* 31*8 + 4*8 */ pub user_pc: VirtAddr,
 }
 
 impl HasEmpty for TrapFrame {

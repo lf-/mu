@@ -19,7 +19,7 @@ use addr::{PHYSMEM, PHYSMEM_MAP};
 use goblin::elf64::program_header::{ProgramHeader, PT_LOAD};
 use loader::{flags_to_riscv, load_image, map_executable, ImageLoadInfo};
 use microflop::FileName;
-use riscv::addr::PHYSMEM_LEN;
+use riscv::addr::{PHYSMEM_LEN, USERSPACE_STACK_TOP};
 use riscv::arch::*;
 use riscv::globals::*;
 use riscv::print;
@@ -260,6 +260,10 @@ unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
         elf_header: init_hdr,
     } = load_image(init_slice, PhysAddr::new(kern_range_phys.end()).as_u8_ptr());
 
+    info!(
+        "init_range_phys: {:x?}, init_range_virt: {:x?}",
+        init_range_phys, init_range_virt
+    );
     info!("init physical memory allocator");
     for page in (endaddr..addr::PHYSMEM + addr::PHYSMEM_LEN).step_by(4096) {
         //println!("wtf {:x}", page);
@@ -270,6 +274,7 @@ unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
         let initrd_span = initrd_slice.into();
         if page_span.intersect(initrd_span).is_some()
             || page_span.intersect(kern_range_phys).is_some()
+            || page_span.intersect(init_range_phys).is_some()
         {
             continue;
         }
@@ -380,12 +385,25 @@ unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
 
     info!("allocate kernel stack");
     // make a new kernel stack
-    let kstack_begin = PHYSMEM_MAP - 0x8000;
-    for page in (kstack_begin..PHYSMEM_MAP).step_by(0x1000) {
-        root_pt
-            .virt_alloc_one(VirtAddr::new(page), PteAttrs::R | PteAttrs::W)
-            .expect("failed to alloc kernel stack");
-    }
+    let kstack_len = 0x8000;
+    let kstack_begin = PHYSMEM_MAP - kstack_len;
+    root_pt
+        .virt_alloc(
+            VirtAddr::new(kstack_begin),
+            kstack_len,
+            PteAttrs::R | PteAttrs::W,
+        )
+        .expect("failed to alloc kernel stack");
+
+    let init_sp = USERSPACE_STACK_TOP;
+    let init_stack_len = 0x8000;
+    root_pt
+        .virt_alloc(
+            USERSPACE_STACK_TOP.offset(-init_stack_len),
+            init_stack_len as usize,
+            PteAttrs::R | PteAttrs::W | PteAttrs::User,
+        )
+        .expect("alloc init stack");
 
     set_satp(satp);
     info!("paging enabled, jumping to the kernel");
@@ -396,8 +414,9 @@ unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
 
     let entry_params = KernelEntryParams {
         core_id,
+        init_sp,
         init_entrypoint: VirtAddr(init_hdr.e_entry as usize),
-        stack_pointer: sp,
+        stack_pointer: VirtAddr(sp),
     };
 
     let params_ptr = (PHYSMEM_MAP - entry_params_size) as *mut KernelEntryParams;

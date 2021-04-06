@@ -38,3 +38,4 @@ pub const MAX_VIRT: usize = 0xffff_ffff_ffff_ffff; // sx(0x80_0000_0000)
 pub const PHYSMEM_MAP: usize = 0xffff_ffe0_0000_0000; // sx(0x60_0000_0000)
 
 pub const TRAP_DATA: VirtAddr = VirtAddr(0xffff_ffc0_0000_1000);
+pub const USERSPACE_STACK_TOP: VirtAddr = VirtAddr(0x0000_0040_0000_0000);

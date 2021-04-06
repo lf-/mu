@@ -78,6 +78,7 @@ fn panic_handler(info: &PanicInfo) -> ! {
 #[repr(C)]
 pub struct KernelEntryParams {
     pub core_id: usize,
+    pub init_sp: VirtAddr,
     pub init_entrypoint: VirtAddr,
-    pub stack_pointer: usize,
+    pub stack_pointer: VirtAddr,
 }
