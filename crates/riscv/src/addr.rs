@@ -25,6 +25,7 @@ use riscv_paging::VirtAddr;
 
 // note that this needs to be manually synced with vectors.s values
 pub const MAX_CPUS: usize = 8;
+pub const MAX_THREADS: usize = 64;
 
 pub const UART0: usize = 0x1000_0000;
 pub const UART0LEN: usize = 0x1000;

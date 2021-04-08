@@ -1,6 +1,6 @@
 use core::{cell::UnsafeCell, sync::atomic::*};
 
-use crate::addr;
+use crate::{addr, arch};
 
 /// Structure is only accessible from asm, where its sync guarantees are upheld
 #[repr(transparent)]
@@ -36,7 +36,7 @@ impl<T: HasEmpty> PerHartMut<T> {
     ///
     /// safety: you must only call this once, only from the hart with your own
     /// `hart` number
-    pub unsafe fn get(&self, hart: usize) -> &'static mut T {
-        &mut *self.0[hart].get()
+    pub unsafe fn get(&self) -> &'static mut T {
+        &mut *self.0[arch::core_id()].get()
     }
 }

@@ -1,11 +1,15 @@
 #![no_std]
 #![no_main]
+#![feature(inline_const)]
+
+use core::sync::atomic::Ordering;
 
 pub mod exc;
 mod tframe;
+mod thread;
 
 use arch::Satp;
-use exc::enter_userspace;
+use exc::{enter_userspace, k_entry};
 use log::info;
 use riscv::arch;
 use riscv::paging::Addr;
@@ -17,15 +21,12 @@ use tframe::TrapFrame;
 #[allow(dead_code)]
 const ASSERT_KERN_MAIN_IS_RIGHT_TYPE: riscv::KernEntry = kern_main;
 
-unsafe extern "C" fn entry(_: *mut TrapFrame) -> ! {
-    panic!("fff");
-}
-
 #[export_name = "_entry"]
 #[no_mangle]
 pub extern "C" fn kern_main(params: &KernelEntryParams) -> ! {
     // reinit the serial port ;; this may be bad if we have multiple CPUs; add a barrier
     riscv::print::init();
+    riscv::NUM_CPUS.store(params.num_cpus, Ordering::Relaxed);
     info!("Hello world from the kernel on cpu {}!", params.core_id);
 
     let tf = TrapFrame {
@@ -66,7 +67,7 @@ pub extern "C" fn kern_main(params: &KernelEntryParams) -> ! {
             /* t6 */ 0,
         ],
         user_pc: params.init_entrypoint,
-        target_fn: entry,
+        target_fn: k_entry,
     };
     unsafe { enter_userspace(tf) };
     freeze_hart()

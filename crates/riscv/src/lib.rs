@@ -81,4 +81,10 @@ pub struct KernelEntryParams {
     pub init_sp: VirtAddr,
     pub init_entrypoint: VirtAddr,
     pub stack_pointer: VirtAddr,
+    /// number of cpus in the system.
+    // TODO(smp): this probably needs to be redesigned along with the boot
+    // process, to enable SMP (one core brings up the system then brings up the
+    // other cores from halt, bypassing shoo??). but we need it for now for
+    // panic handlers
+    pub num_cpus: usize,
 }

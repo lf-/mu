@@ -7,7 +7,7 @@ use core::mem;
 
 use riscv::{
     addr::TRAP_DATA,
-    arch::{PhysMem, Satp},
+    arch::{set_stvec, PhysMem, Satp},
     paging::{PageSize, PhysAccess, PteAttrs},
 };
 
@@ -22,11 +22,15 @@ pub unsafe extern "C" fn k_entry(tf: *mut TrapFrame) -> ! {
 
 extern "C" {
     fn k_enter_userspace(tf: *mut TrapFrame) -> !;
+    // we don't need to model anything about this function other than it should
+    // never be called from rust
+    fn k_return_from_userspace();
 }
 
 pub unsafe fn enter_userspace(tf: TrapFrame) -> ! {
-    let global_tf = TRAP_FRAMES.get(riscv::arch::core_id());
+    let global_tf = TRAP_FRAMES.get();
     *global_tf = tf;
+    set_stvec(k_return_from_userspace as _);
 
     k_enter_userspace(global_tf)
 }

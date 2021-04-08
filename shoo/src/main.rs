@@ -291,11 +291,11 @@ unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
     let satp = Satp::new(&root_pt, 0, TranslationMode::Sv39);
 
     // sets the running task so we can hit exceptions properly
-    let task = task::FAULT_TASKS.get(core_id);
+    let task = task::FAULT_TASKS.get();
     task.hart_id = core_id;
     // crash stack
     // set the pointer to the END of the stack, lol
-    task.kernel_sp = EXCEPTION_STACKS.get(core_id).as_mut_ptr().offset(8192) as *mut _;
+    task.kernel_sp = EXCEPTION_STACKS.get().as_mut_ptr().offset(8192) as *mut _;
     task.kernel_satp = satp;
     set_running_task(task as *mut _ as usize);
 
@@ -417,6 +417,7 @@ unsafe extern "C" fn shoo_main(core_id: usize, dtb: *const u8) -> ! {
         init_sp,
         init_entrypoint: VirtAddr(init_hdr.e_entry as usize),
         stack_pointer: VirtAddr(sp),
+        num_cpus: riscv::NUM_CPUS.load(Ordering::Relaxed),
     };
 
     let params_ptr = (PHYSMEM_MAP - entry_params_size) as *mut KernelEntryParams;

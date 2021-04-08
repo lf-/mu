@@ -25,7 +25,8 @@ K_SUPERVISOR_VECTORS:
 .option pop
 
 // jump to rust
-s_enter:
+.globl k_return_from_userspace
+k_return_from_userspace:
     // get a pointer to the trap frame
     csrrw x1, sscratch, x1
     // save whatever regs we had on entry there
@@ -60,7 +61,7 @@ s_enter:
     sd x30, 8*29(x1)
     sd x31, 8*30(x1)
 
-    // copy it before swapping it back
+    // copy the tf before swapping it back
     mv x2, x1
     csrrw x1, sscratch, x1
     sd x1, 8*0(x2)
