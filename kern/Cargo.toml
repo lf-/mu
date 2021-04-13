@@ -9,6 +9,7 @@ edition = "2018"
 riscv = { path = "../crates/riscv" }
 log = "0.4.11"
 static_assertions = "1.1.0"
+mu_shared = { path = "../crates/mu_shared" }
 
 [build-dependencies]
 cc = "1.0.66"

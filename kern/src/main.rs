@@ -1,10 +1,11 @@
 #![no_std]
 #![no_main]
+#![allow(incomplete_features)]
 #![feature(inline_const)]
 
 use core::sync::atomic::Ordering;
 
-pub mod exc;
+mod exc;
 mod tframe;
 mod thread;
 
@@ -69,6 +70,6 @@ pub extern "C" fn kern_main(params: &KernelEntryParams) -> ! {
         user_pc: params.init_entrypoint,
         target_fn: k_entry,
     };
-    unsafe { enter_userspace(tf) };
+    unsafe { enter_userspace(&tf) };
     freeze_hart()
 }

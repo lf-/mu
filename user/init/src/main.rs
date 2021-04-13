@@ -6,6 +6,6 @@ use mu::syscall;
 extern crate mu;
 
 fn main() {
-    syscall::log("ffffff");
+    syscall::log("hello from init");
     loop {}
 }

@@ -68,6 +68,10 @@ k_return_from_userspace:
     // first arg to entry is the pointer to our CPU's TrapFrame with regs
     mv a0, x2
 
+    // .user_pc
+    csrr t0, sepc
+    sd t0, 8*31+4*8(a0)
+
     // .target_fn
     ld t0, 8*31(a0)
 

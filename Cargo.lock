@@ -295,6 +295,7 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "log",
+ "mu_shared",
  "riscv",
  "static_assertions",
 ]
@@ -375,6 +376,9 @@ dependencies = [
 [[package]]
 name = "mu_shared"
 version = "0.0.0"
+dependencies = [
+ "typesafe_ints",
+]
 
 [[package]]
 name = "num-derive"

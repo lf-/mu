@@ -5,5 +5,5 @@ alias connect = target extended-remote :1234
 symbol-file target/riscv64imac-mu-shoo-elf/release/shoo
 add-symbol-file target/riscv64imac-mu-kern-elf/release/kern
 add-symbol-file target/riscv64imac-mu-user-elf/release/init
-set disassemble-next-line auto
+set disassemble-next-line on
 set riscv use-compressed-breakpoints yes

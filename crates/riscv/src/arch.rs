@@ -75,6 +75,17 @@ macro_rules! csrr {
             $ret_ty(ret)
         }
     };
+    ($docs:expr, $fn_name:ident, $csr_name:ident, enum $ret_ty:ident) => {
+        #[doc=$docs]
+        pub unsafe fn $fn_name() -> $ret_ty {
+            let ret: usize;
+            asm!(
+                concat!("csrr {0}, ", stringify!($csr_name)),
+                out(reg) ret
+            );
+            $ret_ty::from(ret)
+        }
+    };
 }
 
 macro_rules! csrw {
@@ -214,6 +225,8 @@ csrw!(
     sstatus,
     struct StatusReg
 );
+
+csrr!("Gets the supervisor trap cause", get_scause, scause, enum SCause);
 
 // ------------- Unprivileged Instructions ---------------
 
@@ -362,6 +375,8 @@ impl Satp {
 }
 
 /// status register. some fields may not have valid values depending on CPU mode
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug)]
 pub struct StatusReg(pub u64);
 
 impl StatusReg {
@@ -468,7 +483,25 @@ impl PhysAccess for PhysMem {
 
 // ---------------------------- Faults ----------------------------
 
-typesafe_ints::int_enum_only!(
+// has only the top bit set
+const TOP: usize = !0 & !(!0 >> 1);
+
+pub enum SCause {
+    Exception(ExceptionType),
+    Interrupt(InterruptType),
+}
+
+impl From<usize> for SCause {
+    fn from(v: usize) -> Self {
+        if (v as isize) < 0 {
+            SCause::Interrupt(InterruptType::from(!TOP & v))
+        } else {
+            SCause::Exception(ExceptionType::from(v))
+        }
+    }
+}
+
+typesafe_ints::int_enum!(
 #[derive(Debug)]
 pub enum ExceptionType(usize) {
     InsnAddressMisaligned = 0,
@@ -479,8 +512,22 @@ pub enum ExceptionType(usize) {
     LoadAccessFault = 5,
     StoreAmoAddressMisaligned = 6,
     StoreAmoAccessFault = 7,
+    EnvCallU = 8,
+    EnvCallS = 9,
     InsnPageFault = 12,
     LoadPageFault = 13,
     StoreAmoPageFault = 15,
+}
+);
+
+typesafe_ints::int_enum!(
+#[derive(Debug)]
+pub enum InterruptType(usize) {
+    SSoftware = 1,
+    MSoftware = 3,
+    STimer    = 5,
+    MTimer    = 7,
+    SExternal = 9,
+    MExternal = 11,
 }
 );

@@ -1,6 +1,8 @@
 #![no_std]
+#![allow(incomplete_features)]
 #![feature(asm, panic_info_message)]
 #![feature(const_fn)]
+#![feature(inline_const)]
 
 pub mod addr;
 pub mod arch;

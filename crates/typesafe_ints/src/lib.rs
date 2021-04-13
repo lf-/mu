@@ -72,7 +72,7 @@ macro_rules! int_enum {
     }) => {
         $(#[$meta])*
         $vis enum $ident {
-            $($(#[$varmeta:meta])* $variant),*
+            $($(#[$varmeta])* $variant),*
             , Other($ty)
         }
 
@@ -143,17 +143,17 @@ macro_rules! int_enum_only {
         $(#[$meta])*
         #[repr($ty)]
         $vis enum $ident {
-            $($(#[$varmeta:meta])* $variant = $num),*
+            $($(#[$varmeta])* $variant = $num),*
         }
 
         impl ::core::convert::TryFrom<$ty> for $ident {
-            type Error = ();
+            type Error = $ty;
             fn try_from(t: $ty) -> ::core::result::Result<$ident, Self::Error> {
                 match t {
                     $(
                         $num => Ok($ident::$variant)
                     ),*
-                    , _ => Err(())
+                    , v => Err(v)
                 }
             }
         }
