@@ -226,7 +226,7 @@ csrw!(
     struct StatusReg
 );
 
-csrr!("Gets the supervisor trap cause", get_scause, scause, enum SCause);
+csrr!("Gets the supervisor trap cause", get_scause, scause, enum ExceptionType);
 
 // ------------- Unprivileged Instructions ---------------
 
@@ -486,21 +486,6 @@ impl PhysAccess for PhysMem {
 // has only the top bit set
 const TOP: usize = !0 & !(!0 >> 1);
 
-pub enum SCause {
-    Exception(ExceptionType),
-    Interrupt(InterruptType),
-}
-
-impl From<usize> for SCause {
-    fn from(v: usize) -> Self {
-        if (v as isize) < 0 {
-            SCause::Interrupt(InterruptType::from(!TOP & v))
-        } else {
-            SCause::Exception(ExceptionType::from(v))
-        }
-    }
-}
-
 typesafe_ints::int_enum!(
 #[derive(Debug)]
 pub enum ExceptionType(usize) {
@@ -517,17 +502,12 @@ pub enum ExceptionType(usize) {
     InsnPageFault = 12,
     LoadPageFault = 13,
     StoreAmoPageFault = 15,
-}
-);
 
-typesafe_ints::int_enum!(
-#[derive(Debug)]
-pub enum InterruptType(usize) {
-    SSoftware = 1,
-    MSoftware = 3,
-    STimer    = 5,
-    MTimer    = 7,
-    SExternal = 9,
-    MExternal = 11,
+    SSoftware = (TOP | 1),
+    MSoftware = (TOP | 3),
+    STimer    = (TOP | 5),
+    MTimer    = (TOP | 7),
+    SExternal = (TOP | 9),
+    MExternal = (TOP | 11),
 }
 );

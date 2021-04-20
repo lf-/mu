@@ -68,7 +68,7 @@ assert_eq!(v_d, d);
 #[macro_export]
 macro_rules! int_enum {
     ($(#[$meta:meta])* $vis:vis enum $ident:ident($ty:ty) {
-        $($(#[$varmeta:meta])* $variant:ident = $num:expr),* $(,)*
+        $($(#[$varmeta:meta])* $variant:ident = $num:tt),* $(,)*
     }) => {
         $(#[$meta])*
         $vis enum $ident {
@@ -78,9 +78,10 @@ macro_rules! int_enum {
 
         impl ::core::convert::From<$ty> for $ident {
             fn from(t: $ty) -> $ident {
+                #[allow(unused_parens)]
                 match t {
                     $(
-                        $num => $ident::$variant
+                        (const { $num as $ty }) => $ident::$variant
                     ),*
                     , o => $ident::Other(o)
                 }

@@ -6,10 +6,7 @@
 
 use core::convert::TryInto;
 use mu_shared::{KernResult, SyscallNum};
-use riscv::arch::{
-    get_scause, get_sstatus, set_sstatus, set_stvec, ExceptionType,
-    SCause::{Exception, Interrupt},
-};
+use riscv::arch::{get_scause, get_sstatus, set_sstatus, set_stvec, ExceptionType};
 use riscv::paging::Addr;
 
 #[allow(dead_code)]
@@ -57,13 +54,8 @@ unsafe fn sc_LogMessage(len: usize, message: *const u8) -> KernResult<()> {
 pub unsafe extern "C" fn k_entry(tf: *mut TrapFrame) -> ! {
     let tf = &mut *tf;
     match get_scause() {
-        Exception(e) => match e {
-            ExceptionType::EnvCallU => {}
-            e => panic!("exceptiowo in userspace {:?}", e),
-        },
-        Interrupt(i) => match i {
-            v => panic!("unexpected int from userspace {:?}", v),
-        },
+        ExceptionType::EnvCallU => {}
+        e => panic!("exceptiowo in userspace {:?}", e),
     }
 
     log::info!("user pc: {:?}", tf.user_pc);
