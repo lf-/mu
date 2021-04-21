@@ -1,3 +1,5 @@
+use build_bits::external_dep;
+
 fn main() {
     let mut builder = cc::Build::new();
     builder
@@ -17,8 +19,7 @@ fn main() {
         .file("src/vectors.s")
         .compile("shoo_asm");
 
-    println!("cargo:rerun-if-changed=src/init.s");
-    println!("cargo:rerun-if-changed=src/trampoline.s");
-    println!("cargo:rerun-if-changed=src/vectors.s");
-    println!("cargo:rerun-if-changed=shoo.ld");
+    external_dep("src/init.s");
+    external_dep("src/vectors.s");
+    external_dep("shoo.ld");
 }

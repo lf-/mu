@@ -12,4 +12,5 @@ static_assertions = "1.1.0"
 mu_shared = { path = "../crates/mu_shared" }
 
 [build-dependencies]
+build_bits = { path = "../crates/build_bits" }
 cc = "1.0.66"

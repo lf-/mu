@@ -6,7 +6,9 @@
 
 use core::convert::TryInto;
 use mu_shared::{KernResult, SyscallNum};
-use riscv::arch::{get_scause, get_sstatus, set_sstatus, set_stvec, ExceptionType};
+use riscv::arch::{
+    get_scause, get_sie, get_sstatus, set_sie, set_sstatus, set_stvec, ExceptionType, SIE_STIE,
+};
 use riscv::paging::Addr;
 
 #[allow(dead_code)]
@@ -89,6 +91,14 @@ pub unsafe fn enter_userspace(tf: &TrapFrame) -> ! {
     let global_tf = TRAP_FRAMES.get();
     *global_tf = tf.clone();
     set_stvec(k_return_from_userspace as _);
+
+    let mut sie = get_sie();
+    sie |= 1 << SIE_STIE;
+    set_sie(sie);
+
+    let mut sstatus = get_sstatus();
+    sstatus.set_s_prev_ints(true);
+    set_sstatus(sstatus);
 
     k_enter_userspace(global_tf)
 }

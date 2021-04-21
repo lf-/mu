@@ -19,23 +19,34 @@ user_targets = init
 user_target_prefix = target/riscv64imac-mu-user-elf/release
 user_target_files = $(addprefix $(user_target_prefix)/,$(user_targets))
 kern = target/riscv64imac-mu-kern-elf/release/kern
+shoo = target/riscv64imac-mu-shoo-elf/release/shoo
 
-# initrd is phony because it is very cheap to build but it's super hard to
-# track its deps with make
-.PHONY: qemu cargo clean initrd $(kern) fake_userspace_target
+.PHONY: qemu clean doc gdb
 
 initrd: $(kern) $(user_target_files)
 	cargo run -p uflop -- new -o initrd $^
 
-cargo:
+$(shoo).d: $(shoo)
+ifneq ("$(wildcard $(shoo).d)","")
+include $(shoo).d
+endif
+$(shoo):
 	(cd shoo; cargo build $(CARGOFLAGS))
+
+$(kern).d: $(kern)
+ifneq ("$(wildcard $(kern).d)","")
+include $(kern).d
+endif
 
 $(kern):
 	(cd kern; cargo build $(CARGOFLAGS))
 
-fake_userspace_target:
+$(user_target_prefix)/%.d: $(user_target_prefix)/$*
+ifneq ("$(wildcard $(user_target_prefix)/*.d)","")
+include $(wildcard $(user_target_prefix)/*.d)
+endif
 
-$(user_target_prefix)/%: fake_userspace_target
+$(user_target_prefix)/%:
 	(cd user/$*; cargo build $(CARGOFLAGS))
 
 clean:
@@ -44,10 +55,10 @@ clean:
 
 # always open a gdb socket but only block if we request a debugger. reasoning:
 # the qemu monitor is rather broken and e.g. doesn't allow reading regs
-qemu: cargo initrd
+qemu: initrd
 	$(QEMU) $(QEMUOPTS) -s
 
-qemu-gdb: cargo initrd
+qemu-gdb: initrd
 	@echo "Run 'make gdb' in another terminal to connect"
 	$(QEMU) $(QEMUOPTS) -s -S
 

@@ -32,4 +32,5 @@ path = "../crates/riscv_paging"
 path = "../crates/fidget_spinner"
 
 [build-dependencies]
+build_bits = { path = "../crates/build_bits" }
 cc = "1.0.65"

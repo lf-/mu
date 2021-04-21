@@ -1,28 +1,6 @@
 .section trampolines
 // supervisor mode vectors for running in user mode
 .align 8 // 2^8 = 256; 4 * XLEN
-.option push
-.option norvc
-.globl K_SUPERVISOR_VECTORS
-K_SUPERVISOR_VECTORS:
-    s_exc_vec: j s_exc_vec
-    s_isr_sw_vec: j s_isr_sw_vec
-    s_reserved2: j s_reserved2
-    s_reserved3: j s_reserved3
-    s_reserved4: j s_reserved4
-    s_isr_timer_vec: j s_isr_timer_vec
-    s_reserved6: j s_reserved6
-    s_reserved7: j s_reserved7
-    s_reserved8: j s_reserved8
-    s_isr_ext_vec: j s_isr_ext_vec
-    s_reserved10: j s_reserved10
-    s_reserved11: j s_reserved11
-    s_reserved12: j s_reserved12
-    s_reserved13: j s_reserved13
-    s_reserved14: j s_reserved14
-    s_reserved15: j s_reserved15
-    s_reserved16: j s_reserved16
-.option pop
 
 // jump to rust
 .globl k_return_from_userspace

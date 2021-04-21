@@ -2,6 +2,7 @@
 members = [
     "kern",
     "shoo",
+    "crates/build_bits",
     "crates/fidget_spinner",
     "crates/hexdump",
     "crates/microflop",

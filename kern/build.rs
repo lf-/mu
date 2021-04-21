@@ -1,3 +1,5 @@
+use build_bits::external_dep;
+
 fn main() {
     let mut builder = cc::Build::new();
     builder
@@ -13,6 +15,6 @@ fn main() {
 
     builder.clone().file("src/trampoline.s").compile("kern_asm");
 
-    println!("cargo:rerun-if-changed=src/trampoline.s");
-    println!("cargo:rerun-if-changed=kern.ld");
+    external_dep("src/trampoline.s");
+    external_dep("kern.ld");
 }

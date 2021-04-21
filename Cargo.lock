@@ -79,6 +79,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "build_bits"
+version = "0.0.0"
+
+[[package]]
 name = "cc"
 version = "1.0.67"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -293,6 +297,7 @@ checksum = "dd25036021b0de88a0aff6b850051563c6516d0bf53f8638938edbb9de732736"
 name = "kern"
 version = "0.1.0"
 dependencies = [
+ "build_bits",
  "cc",
  "log",
  "mu_shared",
@@ -605,6 +610,7 @@ name = "shoo"
 version = "0.1.0"
 dependencies = [
  "bitvec 0.20.1",
+ "build_bits",
  "cc",
  "fdt-rs",
  "fidget_spinner",

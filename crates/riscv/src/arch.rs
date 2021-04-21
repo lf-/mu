@@ -37,12 +37,13 @@ pub unsafe fn enable_interrupts() {
 }
 
 pub const MSTATUS_MPP: RangeInclusive<usize> = 11..=12;
-pub const MSTATUS_MIE: usize = 3;
+pub const MSTATUS_MPIE: usize = 7;
 pub const MSTATUS_SUM: usize = 18;
 
 pub const MIE_MTIE: usize = 7;
 
 pub const SSTATUS_SIE: usize = 1;
+pub const SSTATUS_SPIE: usize = 5;
 
 pub const SIE_SEIE: usize = 9;
 pub const SIE_STIE: usize = 5;
@@ -401,19 +402,19 @@ impl StatusReg {
         self.0.view_bits_mut::<Lsb0>()[MSTATUS_MPP].store(new as u8);
     }
 
-    /// get machine interrupts enabled (mstatus.MIE)
-    pub fn m_ints(&self) -> bool {
-        self.0.view_bits::<Lsb0>()[MSTATUS_MIE]
-    }
-
-    /// sets machine interrupts enabled (mstatus.MIE)
-    pub fn set_m_ints(&mut self, new: bool) {
-        self.0.view_bits_mut::<Lsb0>().set(MSTATUS_MIE, new);
+    /// sets machine interrupts enabled on m-mode exit (mstatus.MPIE)
+    pub fn set_m_prev_ints(&mut self, new: bool) {
+        self.0.view_bits_mut::<Lsb0>().set(MSTATUS_MPIE, new);
     }
 
     /// set whether supervisor mode will receive interrupts
     pub fn set_s_ints(&mut self, new: bool) {
         self.0.view_bits_mut::<Lsb0>().set(SSTATUS_SIE, new);
+    }
+
+    /// sets supervisor interrupts enabled on s-mode exit (mstatus.SPIE)
+    pub fn set_s_prev_ints(&mut self, new: bool) {
+        self.0.view_bits_mut::<Lsb0>().set(SSTATUS_SPIE, new);
     }
 }
 

@@ -87,7 +87,7 @@ pub unsafe fn init_timers() {
 
     // turn on machine interrupts
     let mut status = arch::get_mstatus();
-    status.set_m_ints(true);
+    status.set_m_prev_ints(true);
     arch::set_mstatus(status);
 
     // enable machine timer interrupts
