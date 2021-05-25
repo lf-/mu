@@ -1,7 +1,7 @@
 #![no_std]
 #![allow(incomplete_features)]
 #![feature(asm, panic_info_message)]
-#![feature(const_fn)]
+#![feature(const_fn_trait_bound)]
 #![feature(inline_const)]
 
 pub mod addr;

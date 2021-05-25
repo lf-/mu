@@ -21,7 +21,7 @@ user_target_files = $(addprefix $(user_target_prefix)/,$(user_targets))
 kern = target/riscv64imac-mu-kern-elf/release/kern
 shoo = target/riscv64imac-mu-shoo-elf/release/shoo
 
-.PHONY: qemu clean doc gdb
+.PHONY: qemu clean doc gdb build.rs
 
 initrd: $(kern) $(user_target_files)
 	cargo run -p uflop -- new -o initrd $^
@@ -55,10 +55,10 @@ clean:
 
 # always open a gdb socket but only block if we request a debugger. reasoning:
 # the qemu monitor is rather broken and e.g. doesn't allow reading regs
-qemu: initrd
+qemu: initrd $(shoo)
 	$(QEMU) $(QEMUOPTS) -s
 
-qemu-gdb: initrd
+qemu-gdb: initrd $(shoo)
 	@echo "Run 'make gdb' in another terminal to connect"
 	$(QEMU) $(QEMUOPTS) -s -S
 

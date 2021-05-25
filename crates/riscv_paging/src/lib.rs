@@ -4,12 +4,11 @@
 // volatile ops with pointers
 #![cfg(any(all(target_pointer_width = "64", test), target_arch = "riscv64"))]
 #![feature(asm)]
-#![feature(try_trait)]
 #![allow(non_upper_case_globals)]
 #![no_std]
 
+use core::ptr;
 use core::{marker::PhantomData, mem};
-use core::{option::NoneError, ptr};
 
 use bitvec::prelude::*;
 
@@ -482,7 +481,7 @@ impl<P: PhysAccess> PageTable<P> {
             "mapped virt address must be page aligned"
         );
         let pa = PhysAddr::<P>::new(pa.get());
-        let va = va.canonicalize().round_up(PageSize::Page4k)?;
+        let va = va.canonicalize().round_up(PageSize::Page4k).check_ovf()?;
         let va_parts = va.parts();
 
         let mut table = self;
@@ -523,7 +522,7 @@ impl<P: PhysAccess> PageTable<P> {
         // we need to allocate some page tables now if we are not at level 0 already
         for i in (size as usize + 1..=level).rev() {
             let entry = table.base.as_ptr().offset(va_parts[i] as isize);
-            let next_pt = PageTable::<P>::alloc()?;
+            let next_pt = PageTable::<P>::alloc().ok_or(MapError::OOM)?;
             let pte = Pte::new(next_pt.base.addr(), PteAttrs::V);
             log::debug!(
                 "write level {} index {:3} at {:?} pte {:?}",
@@ -581,8 +580,8 @@ impl<P: PhysAccess> PageTable<P> {
 
         for offs in (0..len.get()).step_by(PAGE_SIZE as _) {
             self.virt_map_one(
-                PhysAddr::new(pa.get().checked_add(offs)?),
-                VirtAddr(va.0.checked_add(offs)?),
+                PhysAddr::new(pa.get().checked_add(offs).check_ovf()?),
+                VirtAddr(va.0.checked_add(offs).check_ovf()?),
                 PageSize::Page4k,
                 attrs,
             )?;
@@ -631,17 +630,29 @@ impl<P: PhysAccess> PageTable<P> {
         let len = VirtSize(len).round_up(PageSize::Page4k).unwrap();
 
         for offs in (0..len.get()).step_by(PAGE_SIZE as _) {
-            self.virt_alloc_one(VirtAddr(va.0.checked_add(offs)?), attrs)?;
+            self.virt_alloc_one(VirtAddr(va.0.checked_add(offs).check_ovf()?), attrs)?;
         }
 
         Ok(())
     }
 }
 
+trait OvfFail {
+    type RetTy;
+    fn check_ovf(self) -> Result<Self::RetTy, MapError>;
+}
+
+impl<T> OvfFail for Option<T> {
+    type RetTy = T;
+    fn check_ovf(self) -> Result<T, MapError> {
+        self.ok_or(MapError::ArithOvf)
+    }
+}
+
 #[derive(Debug)]
 pub enum MapError {
-    /// probably an arithmetic overflow
-    NoneError,
+    /// arithmetic overflow
+    ArithOvf,
     /// given addresses are unaligned
     Unaligned,
     /// address already has been mapped on some level of the page table
@@ -654,12 +665,6 @@ pub enum MapError {
 pub enum UnmapError {
     /// Address was not mapped.
     NotMapped,
-}
-
-impl core::convert::From<NoneError> for MapError {
-    fn from(_: NoneError) -> Self {
-        MapError::NoneError
-    }
 }
 
 /*

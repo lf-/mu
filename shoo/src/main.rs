@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 #![feature(asm, panic_info_message)]
-#![feature(const_fn)]
 
 mod interrupts;
 mod isr;

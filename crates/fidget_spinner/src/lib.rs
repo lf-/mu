@@ -1,7 +1,7 @@
 //! A spinlock
 #![no_std]
 // lol i guess we need this
-#![feature(const_fn)]
+#![feature(const_fn_trait_bound)]
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
