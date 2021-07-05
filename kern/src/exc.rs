@@ -55,8 +55,15 @@ unsafe fn sc_LogMessage(len: usize, message: *const u8) -> KernResult<()> {
 #[no_mangle]
 pub unsafe extern "C" fn k_entry(tf: *mut TrapFrame) -> ! {
     let tf = &mut *tf;
-    match get_scause() {
+    let scause = get_scause();
+    let status = get_sstatus();
+
+    log::info!("enter kern from {:?}: {:?}", status.get_s_prev_pl(), scause);
+
+    match scause {
         ExceptionType::EnvCallU => {}
+        // FIXME: This should go to sched instead
+        ExceptionType::STimer => enter_userspace(tf),
         e => panic!("exceptiowo in userspace {:?}", e),
     }
 

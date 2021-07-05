@@ -42,6 +42,7 @@ pub const MSTATUS_SUM: usize = 18;
 
 pub const MIE_MTIE: usize = 7;
 
+pub const SSTATUS_SPP: usize = 8;
 pub const SSTATUS_SIE: usize = 1;
 pub const SSTATUS_SPIE: usize = 5;
 
@@ -292,6 +293,7 @@ pub fn machinecall(mc: MachineCall, mc_arg: usize) {
 
 #[allow(dead_code)]
 #[repr(u8)]
+#[derive(Debug)]
 pub enum ArchPrivilegeLevel {
     User = 0,
     Supervisor = 1,
@@ -388,6 +390,14 @@ impl StatusReg {
             mem::transmute::<u8, ArchPrivilegeLevel>(
                 self.0.view_bits::<Lsb0>()[MSTATUS_MPP].load(), //
             )
+        }
+    }
+
+    /// gets the supervisor previous privilege level (mstatus.MPP)
+    pub fn get_s_prev_pl(&self) -> ArchPrivilegeLevel {
+        match self.0.view_bits::<Lsb0>()[SSTATUS_SPP] {
+            true => ArchPrivilegeLevel::Supervisor,
+            false => ArchPrivilegeLevel::User,
         }
     }
 

@@ -1,3 +1,5 @@
+.equ SERIAL_PORT, 0x10000000
+
 .globl SUPERVISOR_VECTORS
 .align 8 // 4 * XLEN
 // turn off compact instructions to get our vectors to all be 4 bytes
@@ -317,6 +319,10 @@ m_isr_timer:
     ld a1, 16(a0)
     // store the next interrupt time
     sd a2, 0(a1)
+
+    li a1, SERIAL_PORT
+    li a2, 'Z'
+    sb a2, 0(a1)
 
     // next, tell software about it by setting the bit in sip
     li a1, 1 << 5 // supervisor timer interrupt

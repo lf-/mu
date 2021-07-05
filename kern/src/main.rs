@@ -28,7 +28,6 @@ pub extern "C" fn kern_main(params: &KernelEntryParams) -> ! {
     // reinit the serial port ;; this may be bad if we have multiple CPUs; add a barrier
     riscv::print::init();
     riscv::NUM_CPUS.store(params.num_cpus, Ordering::Relaxed);
-    panic!("meow");
     info!("Hello world from the kernel on cpu {}!", params.core_id);
 
     let tf = TrapFrame {
