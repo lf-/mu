@@ -18,7 +18,8 @@ default_features = false
 features = ["elf64"]
 
 [dependencies.fdt-rs]
-version = "0.4.2"
+git = "https://github.com/lf-/fdt-rs"
+branch = "fix-stable"
 default-features = false
 
 [dependencies.bitvec]

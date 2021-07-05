@@ -18,9 +18,9 @@
 			"check",
 			"--message-format=json",
 			"-p",
-			"kern",
+			"init",
 			"--target",
-			"./riscv64imac-mu-kern-elf.json",
+			"./riscv64imac-mu-user-elf.json",
 			"-Zbuild-std=core,compiler_builtins",
 			"-Zbuild-std-features=compiler-builtins-mem"
 		],

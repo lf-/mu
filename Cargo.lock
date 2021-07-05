@@ -184,7 +184,7 @@ checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
 [[package]]
 name = "fdt-rs"
 version = "0.4.2"
-source = "git+https://github.com/rs-embedded/fdt-rs?branch=master#2364d5088f9da7114bc926d7d2d840ba0346ac60"
+source = "git+https://github.com/lf-/fdt-rs?branch=fix-stable#049ef1010df1a95988ccc5c213ca4f399e0c0c74"
 dependencies = [
  "endian-type-rs",
  "fallible-iterator",

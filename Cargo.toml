@@ -26,6 +26,3 @@ panic = "abort"
 debug = true
 # if operations are expected to not overflow, they will be annotated as such
 overflow-checks = true
-
-[patch.crates-io]
-fdt-rs = { git = 'https://github.com/rs-embedded/fdt-rs', branch = 'master' }
