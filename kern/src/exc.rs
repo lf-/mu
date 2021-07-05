@@ -7,7 +7,8 @@
 use core::convert::TryInto;
 use mu_shared::{KernResult, SyscallNum};
 use riscv::arch::{
-    get_scause, get_sie, get_sstatus, set_sie, set_sstatus, set_stvec, ExceptionType, SIE_STIE,
+    clear_stip, get_scause, get_sie, get_sip, get_sstatus, machinecall, set_sie, set_sstatus,
+    set_stvec, ExceptionType, SIE_STIE,
 };
 use riscv::paging::Addr;
 
@@ -58,12 +59,20 @@ pub unsafe extern "C" fn k_entry(tf: *mut TrapFrame) -> ! {
     let scause = get_scause();
     let status = get_sstatus();
 
-    log::info!("enter kern from {:?}: {:?}", status.get_s_prev_pl(), scause);
+    log::info!(
+        "enter kern from {:?}: {:?} {:b}",
+        status.get_s_prev_pl(),
+        scause,
+        get_sip()
+    );
 
     match scause {
         ExceptionType::EnvCallU => {}
         // FIXME: This should go to sched instead
-        ExceptionType::STimer => enter_userspace(tf),
+        ExceptionType::STimer => {
+            clear_stip();
+            enter_userspace(tf);
+        }
         e => panic!("exceptiowo in userspace {:?}", e),
     }
 

@@ -291,6 +291,11 @@ pub fn machinecall(mc: MachineCall, mc_arg: usize) {
     };
 }
 
+/// Calls into machine mode to clear STIP (supervisor timer interrupt pending)
+pub fn clear_stip() {
+    machinecall(MachineCall::ClearTimerInt, 0);
+}
+
 #[allow(dead_code)]
 #[repr(u8)]
 #[derive(Debug)]
